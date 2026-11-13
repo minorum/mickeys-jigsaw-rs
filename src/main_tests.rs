@@ -1254,3 +1254,33 @@ fn present_signature_skips_idle_board_motion_and_tracks_visual_changes() {
     assert_ne!(idle_a, held_a);
     assert_ne!(held_a, held_b);
 }
+
+#[test]
+fn browser_present_signature_tracks_and_expires_common_captions() {
+    let dir = test_game_dir();
+    let mut app = GameApp::new(dir, true).unwrap();
+    app.screen = AppScreen::Browser;
+    app.prefs.text_msg_on = 1;
+
+    let idle_sig = app.present_signature(120, 80, false, false);
+    assert!(idle_sig.is_some());
+
+    app.audio.play_common(CommonSound::NextPicture);
+    let next_sig = app.present_signature(120, 80, false, false);
+    assert_ne!(idle_sig, next_sig);
+
+    app.audio.play_common(CommonSound::StartPuzzle);
+    let start_sig = app.present_signature(120, 80, false, false);
+    assert_ne!(next_sig, start_sig);
+
+    // Advance enough time for the common caption to expire on an idle Browser screen
+    for _ in 0..20 {
+        app.audio.update(0.5);
+    }
+    assert!(app.audio.common_caption().is_none());
+    let expired_sig = app.present_signature(120, 80, false, false);
+    assert_eq!(expired_sig, idle_sig);
+
+    // Content-aware hashing distinguishes equal-length captions
+    assert_ne!(hash_str_opt(Some("aaaa")), hash_str_opt(Some("bbbb")));
+}

@@ -15,7 +15,8 @@ use crate::assets::{
 use crate::audio::{AudioEngine, CommonSound};
 use crate::graphics::{
     Framebuffer, SCENE_OFFSET_X, SCREEN_H, apply_dissolve_step, compute_frame_bounds,
-    copy_scene_interior, hit_test_frame, render_scene_frame, render_scene_view_with_scratch,
+    copy_scene_interior, dissolve_visible_step, hit_test_frame, render_scene_frame,
+    render_scene_view_with_scratch,
 };
 
 pub const PLAYFIELD_W: i32 = 270;
@@ -223,7 +224,7 @@ pub enum PuzzlePresentKey {
         cur_frame: usize,
         previous_frame: usize,
         transition_mode: u8,
-        dissolve_step_bits: u32,
+        dissolve_step: usize,
         bubble: Option<(usize, usize)>,
         text_enabled: bool,
     },
@@ -248,7 +249,17 @@ pub enum PuzzlePresentKey {
     },
 }
 
-fn hash_str_opt(s: Option<&str>) -> Option<u64> {
+#[inline]
+fn dissolve_progress(anim: &AnimationPlayer) -> f32 {
+    let duration = (anim.frame_delay_secs * 0.5).min(4.0 * DOS_TICK_SECS);
+    if duration > 0.0 {
+        anim.tick_accum / duration
+    } else {
+        1.0
+    }
+}
+
+pub fn hash_str_opt(s: Option<&str>) -> Option<u64> {
     s.map(|text| {
         let mut h = 0xcbf29ce484222325u64;
         for &b in text.as_bytes() {
@@ -1575,12 +1586,7 @@ impl PuzzleSession {
         if let Some(ref anim) = self.active_anim {
             let cache = &mut *self.render_cache;
             if anim.transition_mode == 8 {
-                let duration = (anim.frame_delay_secs * 0.5).min(4.0 * DOS_TICK_SECS);
-                let progress = if duration > 0.0 {
-                    anim.tick_accum / duration
-                } else {
-                    1.0
-                };
+                let progress = dissolve_progress(anim);
                 let key = DissolveCacheKey {
                     previous_frame: anim.previous_frame,
                     cur_frame: anim.cur_frame,
@@ -1756,8 +1762,8 @@ impl PuzzleSession {
 
     pub fn present_key(&self, mouse_x: i32, mouse_y: i32, picture_guide: bool) -> PuzzlePresentKey {
         if let Some(ref anim) = self.active_anim {
-            let dissolve_step_bits = if anim.transition_mode == 8 {
-                anim.tick_accum.to_bits()
+            let dissolve_step = if anim.transition_mode == 8 {
+                dissolve_visible_step(self.asset.uses_ega(), dissolve_progress(anim))
             } else {
                 0
             };
@@ -1767,7 +1773,7 @@ impl PuzzleSession {
                 cur_frame: anim.cur_frame,
                 previous_frame: anim.previous_frame,
                 transition_mode: anim.transition_mode,
-                dissolve_step_bits,
+                dissolve_step,
                 bubble: anim.bubble.filter(|_| self.text_enabled),
                 text_enabled: self.text_enabled,
             };

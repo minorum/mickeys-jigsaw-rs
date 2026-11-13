@@ -14,7 +14,7 @@ use crate::assets::{FontAsset, Preferences, PuzzleAsset, ToolboxAsset, load_ilbm
 use crate::audio::{AudioEngine, CommonSound};
 use crate::decompress::IlbmImage;
 use crate::graphics::{Framebuffer, SCREEN_H, SCREEN_W, render_scene_view_with_scratch};
-use crate::puzzle::{PuzzleAction, PuzzlePresentKey, PuzzleSession};
+use crate::puzzle::{PuzzleAction, PuzzlePresentKey, PuzzleSession, hash_str_opt};
 use crate::setup::SetupMenu;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,7 +45,7 @@ enum AppScreen {
     Playing,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PresentSignature {
     Title,
     Credits(usize),
@@ -65,6 +65,7 @@ enum PresentSignature {
         curved_edges: bool,
         uses_ega: bool,
         can_resume: bool,
+        caption_hash: Option<u64>,
         has_error: bool,
     },
     Reference {
@@ -74,8 +75,7 @@ enum PresentSignature {
     Playing {
         puzzle: PuzzlePresentKey,
         keyboard_pointer: Option<(i32, i32)>,
-        has_caption: bool,
-        caption_len: usize,
+        caption_hash: Option<u64>,
         has_error: bool,
     },
 }
@@ -563,14 +563,22 @@ impl GameApp {
                 text_msg_on: self.setup_menu.prefs.text_msg_on,
                 has_error: self.setup_menu.error.is_some(),
             },
-            AppScreen::Browser => PresentSignature::Browser {
-                selected_puzzle: self.selected_puzzle,
-                selected_grid_dim: self.selected_grid_dim,
-                curved_edges: self.curved_edges,
-                uses_ega: self.preview_asset.uses_ega(),
-                can_resume: self.can_resume_selected(),
-                has_error: self.error.is_some(),
-            },
+            AppScreen::Browser => {
+                let caption_hash = hash_str_opt(
+                    (self.prefs.text_msg_on != 0)
+                        .then(|| self.audio.common_caption())
+                        .flatten(),
+                );
+                PresentSignature::Browser {
+                    selected_puzzle: self.selected_puzzle,
+                    selected_grid_dim: self.selected_grid_dim,
+                    curved_edges: self.curved_edges,
+                    uses_ega: self.preview_asset.uses_ega(),
+                    can_resume: self.can_resume_selected(),
+                    caption_hash,
+                    has_error: self.error.is_some(),
+                }
+            }
             AppScreen::Playing => {
                 let session = self.session.as_ref()?;
                 if show_reference {
@@ -579,18 +587,17 @@ impl GameApp {
                         uses_ega: session.asset.uses_ega(),
                     }
                 } else {
-                    let caption = if self.prefs.text_msg_on != 0 {
-                        self.audio.common_caption()
-                    } else {
-                        None
-                    };
+                    let caption_hash = hash_str_opt(
+                        (self.prefs.text_msg_on != 0)
+                            .then(|| self.audio.common_caption())
+                            .flatten(),
+                    );
                     PresentSignature::Playing {
                         puzzle: session.present_key(mx, my, picture_guide),
                         keyboard_pointer: session
                             .keyboard_pointer
                             .map(|(x, y)| (x.round() as i32, y.round() as i32)),
-                        has_caption: caption.is_some(),
-                        caption_len: caption.map_or(0, str::len),
+                        caption_hash,
                         has_error: self.error.is_some(),
                     }
                 }

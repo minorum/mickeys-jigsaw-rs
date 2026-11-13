@@ -1028,6 +1028,19 @@ pub fn render_scene_dissolve(
     );
 }
 
+pub fn dissolve_visible_step(ega: bool, progress: f32) -> usize {
+    let playfield = dissolve_playfield_order(ega);
+    if !progress.is_finite() || progress <= 0.0 {
+        return 0;
+    }
+    if progress >= 1.0 {
+        return playfield.len();
+    }
+    let total = dissolve_order(ega).len();
+    let limit = (progress * total as f32) as usize;
+    playfield.partition_point(|&(step, _)| (step as usize) < limit)
+}
+
 pub fn apply_dissolve_step(
     fb: &mut Framebuffer,
     prev: &Framebuffer,
@@ -1040,13 +1053,11 @@ pub fn apply_dissolve_step(
         return;
     }
     fb.pixels.copy_from_slice(&prev.pixels);
-    if progress <= 0.0 {
+    let end = dissolve_visible_step(ega, progress);
+    if end == 0 {
         return;
     }
-    let total = dissolve_order(ega).len();
-    let limit = (progress * total as f32) as usize;
     let playfield = dissolve_playfield_order(ega);
-    let end = playfield.partition_point(|&(step, _)| (step as usize) < limit);
     for &(_, target) in &playfield[..end] {
         let idx = target as usize;
         fb.pixels[idx] = next.pixels[idx];
@@ -1725,5 +1736,42 @@ mod tests {
         render_scene_frame(&mut fb, &asset, 0, 0, 0, 0, false, 0, 0);
         assert_eq!(fb.get_pixel(11, 11), 0);
         assert_eq!(fb.get_pixel(21, 21), 7);
+    }
+
+    #[test]
+    fn apply_dissolve_step_matches_render_scene_dissolve() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        for ega in [false, true] {
+            let asset = PuzzleAsset::load(dir, 1, ega).unwrap();
+            let seq = &asset.sequences[1];
+            let prev_frame = seq.start_frame;
+            let next_frame = (seq.start_frame + 1).min(seq.end_frame - 1);
+
+            let mut prev_fb = Framebuffer::new();
+            let mut next_fb = Framebuffer::new();
+            let mut scratch = Framebuffer::new();
+            render_scene_view_with_scratch(&mut prev_fb, &mut scratch, &asset, prev_frame);
+            render_scene_view_with_scratch(&mut next_fb, &mut scratch, &asset, next_frame);
+
+            let mut expected = Framebuffer::new();
+            let mut actual = Framebuffer::new();
+            let mut scratch_next = Framebuffer::new();
+            for progress in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                render_scene_dissolve_with_scratch(
+                    &mut expected,
+                    &mut scratch,
+                    &mut scratch_next,
+                    &asset,
+                    prev_frame,
+                    next_frame,
+                    progress,
+                );
+                apply_dissolve_step(&mut actual, &prev_fb, &next_fb, ega, progress);
+                assert_eq!(
+                    actual.pixels, expected.pixels,
+                    "dissolve mismatch for ega={ega} progress={progress}"
+                );
+            }
+        }
     }
 }
