@@ -1506,8 +1506,8 @@ impl PuzzleSession {
                 let dy = y - hy;
                 if (0..piece.sprite.sub_h as i32).contains(&dy) {
                     let hw = piece.sprite.width as i32;
-                    let x0 = hx.max(0).min(PLAYFIELD_W) as usize;
-                    let x1 = (hx + hw).max(0).min(PLAYFIELD_W) as usize;
+                    let x0 = hx.clamp(0, PLAYFIELD_W) as usize;
+                    let x1 = (hx + hw).clamp(0, PLAYFIELD_W) as usize;
                     if x0 < x1 {
                         let row_off = (piece.sprite.sub_y as usize + dy as usize)
                             * piece.sprite.stride as usize

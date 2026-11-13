@@ -1165,8 +1165,8 @@ fn perf_benchmark() {
     session.held_piece = Some(0);
     let t_drag = Instant::now();
     for i in 0..iters {
-        let mx = 80 + (i % 160) as i32;
-        let my = 40 + (i % 120) as i32;
+        let mx = 80 + (i % 160);
+        let my = 40 + (i % 120);
         session.render(&mut fb, &tbx, &font, mx, my);
         fb.to_rgba8(&mut rgba);
         session.blend_picture_guide(&mut rgba, mx, my);
