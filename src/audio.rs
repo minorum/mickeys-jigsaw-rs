@@ -7,9 +7,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
-use rodio::buffer::SamplesBuffer;
-use rodio::{OutputStream, OutputStreamHandle, Sink};
+use rodio::{OutputStream, OutputStreamHandle, Sink, Source};
 
 use crate::decompress::split_multi_resource;
 
@@ -500,6 +500,64 @@ pub fn synthesize_iss_song(song: &[u8]) -> Vec<i16> {
 }
 
 /// Zero-copy mono PCM source backed by a shared or static slice.
+struct SampleSlice<T> {
+    samples: T,
+    pos: usize,
+    sample_rate: u32,
+}
+
+impl<T: AsRef<[i16]>> SampleSlice<T> {
+    fn new(sample_rate: u32, samples: T) -> Self {
+        Self {
+            samples,
+            pos: 0,
+            sample_rate,
+        }
+    }
+}
+
+impl<T: AsRef<[i16]>> Iterator for SampleSlice<T> {
+    type Item = i16;
+
+    #[inline]
+    fn next(&mut self) -> Option<i16> {
+        let slice = self.samples.as_ref();
+        if self.pos < slice.len() {
+            let sample = slice[self.pos];
+            self.pos += 1;
+            Some(sample)
+        } else {
+            None
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let rem = self.samples.as_ref().len().saturating_sub(self.pos);
+        (rem, Some(rem))
+    }
+}
+
+impl<T: AsRef<[i16]>> Source for SampleSlice<T> {
+    fn current_frame_len(&self) -> Option<usize> {
+        None
+    }
+
+    fn channels(&self) -> u16 {
+        1
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        let len = self.samples.as_ref().len() as u64;
+        Some(Duration::from_nanos(
+            len * 1_000_000_000 / u64::from(self.sample_rate),
+        ))
+    }
+}
+
 /// Complete audio manager holding decoded `.ESS`, `.NNV`, and `.ISS` banks and an optional `rodio` output stream.
 pub struct AudioEngine {
     pub nnv_banks: HashMap<String, Vec<u8>>,
@@ -598,7 +656,7 @@ impl AudioEngine {
             return;
         }
         let samples = self.decoded_nnv_samples(stem, phrase_idx);
-        self.play_effect(&samples, NNV_SAMPLE_RATE);
+        self.play_effect(samples, NNV_SAMPLE_RATE);
     }
 
     pub fn play_common(&mut self, event: CommonSound) {
@@ -613,7 +671,7 @@ impl AudioEngine {
         self.next_caption_rev = self.next_caption_rev.wrapping_add(1);
         self.common_caption = Some((event, duration, self.next_caption_rev));
         if self.sfx_enabled {
-            self.play_effect(&samples, NNV_SAMPLE_RATE);
+            self.play_effect(samples, NNV_SAMPLE_RATE);
         }
     }
 
@@ -641,14 +699,14 @@ impl AudioEngine {
         }
     }
 
-    fn play_effect(&mut self, samples: &[i16], rate: u32) {
-        if samples.is_empty() {
+    fn play_effect<T: AsRef<[i16]> + Send + 'static>(&mut self, samples: T, rate: u32) {
+        if samples.as_ref().is_empty() {
             return;
         }
         if let Some(ref handle) = self.stream_handle
             && let Ok(sink) = Sink::try_new(handle)
         {
-            sink.append(SamplesBuffer::new(1, rate, samples));
+            sink.append(SampleSlice::new(rate, samples));
             self.sfx_sinks.retain(|s| !s.empty());
             self.sfx_sinks.push(sink);
         }
@@ -679,7 +737,7 @@ impl AudioEngine {
         if let Some(ref handle) = self.stream_handle
             && let Ok(sink) = Sink::try_new(handle)
         {
-            sink.append(SamplesBuffer::new(1, AUDIO_SAMPLE_RATE, samples.as_ref()));
+            sink.append(SampleSlice::new(AUDIO_SAMPLE_RATE, samples));
             self.music_sink = Some(sink);
         }
     }
@@ -1122,5 +1180,24 @@ mod tests {
         assert!(!first.is_empty());
         assert_eq!(first, second);
         assert!(engine.decoded_nnv_samples("MISSING", 0).is_empty());
+    }
+
+    #[test]
+    fn cached_audio_playback_shares_pcm_buffer_without_copying() {
+        let shared: Arc<[i16]> = vec![120i16, -240, 360, -480].into();
+        let src_a = SampleSlice::new(NNV_SAMPLE_RATE, Arc::clone(&shared));
+        let src_b = SampleSlice::new(NNV_SAMPLE_RATE, Arc::clone(&shared));
+        assert_eq!(Arc::strong_count(&shared), 3);
+        assert!(Arc::ptr_eq(&src_a.samples, &shared));
+        assert!(Arc::ptr_eq(&src_b.samples, &shared));
+        assert_eq!(src_a.channels(), 1);
+        assert_eq!(src_a.sample_rate(), NNV_SAMPLE_RATE);
+        assert_eq!(src_a.collect::<Vec<_>>(), shared.as_ref());
+        assert_eq!(src_b.collect::<Vec<_>>(), shared.as_ref());
+        assert_eq!(Arc::strong_count(&shared), 1);
+
+        let static_src = SampleSlice::new(AUDIO_SAMPLE_RATE, error_buzz_samples());
+        assert_eq!(static_src.sample_rate(), AUDIO_SAMPLE_RATE);
+        assert_eq!(static_src.count(), error_buzz_samples().len());
     }
 }
