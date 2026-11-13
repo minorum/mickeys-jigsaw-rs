@@ -14,9 +14,8 @@ use crate::assets::{
 };
 use crate::audio::{AudioEngine, CommonSound};
 use crate::graphics::{
-    Framebuffer, SCENE_OFFSET_X, SCREEN_H, compute_frame_bounds, copy_scene_interior,
-    hit_test_frame, render_scene_dissolve_with_scratch, render_scene_frame,
-    render_scene_view_with_scratch,
+    Framebuffer, SCENE_OFFSET_X, SCREEN_H, apply_dissolve_step, compute_frame_bounds,
+    copy_scene_interior, hit_test_frame, render_scene_frame, render_scene_view_with_scratch,
 };
 
 pub const PLAYFIELD_W: i32 = 270;
@@ -216,6 +215,50 @@ impl UiColors {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PuzzlePresentKey {
+    Anim {
+        puzzle_num: usize,
+        uses_ega: bool,
+        cur_frame: usize,
+        previous_frame: usize,
+        transition_mode: u8,
+        dissolve_step_bits: u32,
+        bubble: Option<(usize, usize)>,
+        text_enabled: bool,
+    },
+    Solved {
+        puzzle_num: usize,
+        uses_ega: bool,
+        status_hash: Option<u64>,
+    },
+    Board {
+        puzzle_num: usize,
+        uses_ega: bool,
+        toolbox_open: bool,
+        grid_lines: bool,
+        placed_bits: u128,
+        tray_scroll: usize,
+        tray_len: usize,
+        hovered_slot: Option<usize>,
+        hint_blink: Option<(usize, i32)>,
+        status_hash: Option<u64>,
+        held_piece_pos: Option<(usize, i32, i32)>,
+        picture_guide: bool,
+    },
+}
+
+fn hash_str_opt(s: Option<&str>) -> Option<u64> {
+    s.map(|text| {
+        let mut h = 0xcbf29ce484222325u64;
+        for &b in text.as_bytes() {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        h
+    })
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct BoardCacheKey {
     toolbox_open: bool,
@@ -223,9 +266,25 @@ struct BoardCacheKey {
     placed_bits: u128,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct AnimFrameCacheKey {
+    cur_frame: usize,
+    bubble: Option<(usize, usize)>,
+    text_enabled: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct DissolveCacheKey {
+    previous_frame: usize,
+    cur_frame: usize,
+}
+
 struct RenderCache {
     scratch_fb: Box<Framebuffer>,
+    dissolve_prev_fb: Box<Framebuffer>,
     dissolve_next_fb: Box<Framebuffer>,
+    dissolve_key: Option<DissolveCacheKey>,
+    anim_fb: Option<(AnimFrameCacheKey, Box<Framebuffer>)>,
     placed_mask: Option<(u128, Vec<bool>)>,
     board_fb: Option<(BoardCacheKey, Box<Framebuffer>)>,
 }
@@ -246,13 +305,18 @@ impl RenderCache {
     fn new() -> Box<Self> {
         Box::new(Self {
             scratch_fb: Box::new(Framebuffer::new()),
+            dissolve_prev_fb: Box::new(Framebuffer::new()),
             dissolve_next_fb: Box::new(Framebuffer::new()),
+            dissolve_key: None,
+            anim_fb: None,
             placed_mask: None,
             board_fb: None,
         })
     }
 
     fn invalidate(&mut self) {
+        self.dissolve_key = None;
+        self.anim_fb = None;
         self.placed_mask = None;
         self.board_fb = None;
     }
@@ -441,19 +505,29 @@ pub struct PuzzleSession {
     pub grid_polylines_v: Vec<Vec<(i32, i32)>>,
     pub grid_polylines_h: Vec<Vec<(i32, i32)>>,
     ui_colors: UiColors,
-    guide_lut: [[u8; 3]; 256],
+    guide_playfield: Vec<[u8; 4]>,
     render_cache: Box<RenderCache>,
 }
 
-fn build_guide_lut(palette: &[[u8; 3]; 256], board_bg: u8) -> [[u8; 3]; 256] {
-    let bg = palette[board_bg as usize];
-    let mut lut = [[0u8; 3]; 256];
-    for (dst, src) in lut.iter_mut().zip(palette.iter()) {
-        for c in 0..3 {
-            dst[c] = ((u16::from(bg[c]) * 4 + u16::from(src[c])) / 5) as u8;
+fn build_guide_playfield(full_picture_fb: &Framebuffer, board_bg: u8) -> Vec<[u8; 4]> {
+    let bg = full_picture_fb.palette[board_bg as usize];
+    let mut lut = [[0u8; 4]; 256];
+    for (dst, src) in lut.iter_mut().zip(full_picture_fb.palette.iter()) {
+        *dst = [
+            ((u16::from(bg[0]) * 4 + u16::from(src[0])) / 5) as u8,
+            ((u16::from(bg[1]) * 4 + u16::from(src[1])) / 5) as u8,
+            ((u16::from(bg[2]) * 4 + u16::from(src[2])) / 5) as u8,
+            255,
+        ];
+    }
+    let mut out = Vec::with_capacity((PLAYFIELD_W * PLAYFIELD_H) as usize);
+    for y in 0..PLAYFIELD_H {
+        let row = ((2 + y) as usize) * 320 + 2;
+        for x in 0..PLAYFIELD_W as usize {
+            out.push(lut[full_picture_fb.pixels[row + x] as usize]);
         }
     }
-    lut
+    out
 }
 
 impl PuzzleSession {
@@ -466,7 +540,7 @@ impl PuzzleSession {
         timer_enabled: bool,
     ) -> Self {
         let dim = grid_dim.clamp(1, 8);
-        let (full_picture_fb, ui_colors, guide_lut) = Self::render_full_picture(&asset);
+        let (full_picture_fb, ui_colors, guide_playfield) = Self::render_full_picture(&asset);
 
         let mut session = Self {
             puzzle_num,
@@ -492,7 +566,7 @@ impl PuzzleSession {
             grid_polylines_v: Vec::new(),
             grid_polylines_h: Vec::new(),
             ui_colors,
-            guide_lut,
+            guide_playfield,
             render_cache: RenderCache::new(),
         };
         session.cut_pieces();
@@ -510,7 +584,7 @@ impl PuzzleSession {
         bits
     }
 
-    fn render_full_picture(asset: &PuzzleAsset) -> (Framebuffer, UiColors, [[u8; 3]; 256]) {
+    fn render_full_picture(asset: &PuzzleAsset) -> (Framebuffer, UiColors, Vec<[u8; 4]>) {
         let mut full_picture_fb = Framebuffer::new();
         full_picture_fb.palette = asset.palette;
         let static_frame_idx = asset.static_frame_idx();
@@ -526,13 +600,13 @@ impl PuzzleSession {
             0,
         );
         let ui_colors = UiColors::from_framebuffer(&full_picture_fb);
-        let guide_lut = build_guide_lut(&asset.palette, ui_colors.board_bg);
-        (full_picture_fb, ui_colors, guide_lut)
+        let guide_playfield = build_guide_playfield(&full_picture_fb, ui_colors.board_bg);
+        (full_picture_fb, ui_colors, guide_playfield)
     }
 
     pub fn replace_scene_asset(&mut self, asset: PuzzleAsset) {
         assert_eq!(asset.id, self.puzzle_num);
-        let (full_picture_fb, ui_colors, guide_lut) = Self::render_full_picture(&asset);
+        let (full_picture_fb, ui_colors, guide_playfield) = Self::render_full_picture(&asset);
         let old_placed: Vec<bool> = self.pieces.iter().map(|p| p.placed).collect();
         let old_tray_order = std::mem::take(&mut self.tray_order);
         let old_tray_scroll = self.tray_scroll;
@@ -542,7 +616,7 @@ impl PuzzleSession {
         self.asset = asset;
         self.full_picture_fb = full_picture_fb;
         self.ui_colors = ui_colors;
-        self.guide_lut = guide_lut;
+        self.guide_playfield = guide_playfield;
         self.cut_pieces();
 
         if self.pieces.len() == old_placed.len() {
@@ -1416,52 +1490,64 @@ impl PuzzleSession {
             )
         });
 
-        let background = self.asset.palette[self.ui_colors.board_bg as usize];
+        let bg_rgb = self.asset.palette[self.ui_colors.board_bg as usize];
+        let bg_rgba = [bg_rgb[0], bg_rgb[1], bg_rgb[2], 255];
+        let (rgba_chunks, _) = rgba.as_chunks_mut::<4>();
+        let pw = PLAYFIELD_W as usize;
+
         for y in 0..PLAYFIELD_H {
-            let cov_row = (y * PLAYFIELD_W) as usize;
-            let fb_row = ((2 + y) as usize) * 320 + 2;
+            let cov_row = (y as usize) * pw;
             let rgba_row = ((pfy + y) as usize) * 320 + pfx as usize;
-            let held_row = held_bounds.and_then(|(piece, hx, hy)| {
+            let dst_row = &mut rgba_chunks[rgba_row..rgba_row + pw];
+            let cov_slice = &placed_cov[cov_row..cov_row + pw];
+            let guide_row = &self.guide_playfield[cov_row..cov_row + pw];
+
+            let held_span = held_bounds.and_then(|(piece, hx, hy)| {
                 let dy = y - hy;
                 if (0..piece.sprite.sub_h as i32).contains(&dy) {
-                    let row_off = (piece.sprite.sub_y as usize + dy as usize)
-                        * piece.sprite.stride as usize
-                        + piece.sprite.sub_x as usize;
-                    Some((
-                        &piece.sprite.pixels,
-                        piece.sprite.opacity.as_deref(),
-                        piece.sprite.transparent_color,
-                        hx,
-                        piece.sprite.width as i32,
-                        row_off,
-                    ))
+                    let hw = piece.sprite.width as i32;
+                    let x0 = hx.max(0).min(PLAYFIELD_W) as usize;
+                    let x1 = (hx + hw).max(0).min(PLAYFIELD_W) as usize;
+                    if x0 < x1 {
+                        let row_off = (piece.sprite.sub_y as usize + dy as usize)
+                            * piece.sprite.stride as usize
+                            + piece.sprite.sub_x as usize;
+                        Some((piece, hx, row_off, x0, x1))
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
             });
-            for x in 0..PLAYFIELD_W as usize {
-                let offset = (rgba_row + x) * 4;
-                if placed_cov[cov_row + x]
-                    || rgba[offset] != background[0]
-                    || rgba[offset + 1] != background[1]
-                    || rgba[offset + 2] != background[2]
-                {
-                    continue;
-                }
-                if let Some((pixels, opacity, trans, hx, hw, row_off)) = held_row {
-                    let dx = x as i32 - hx;
-                    if (0..hw).contains(&dx) {
-                        let idx = row_off + dx as usize;
-                        let opaque = opacity.map_or(pixels[idx] != trans, |mask| mask[idx]);
-                        if opaque {
-                            continue;
-                        }
+
+            if let Some((piece, hx, row_off, x0, x1)) = held_span {
+                for x in 0..x0 {
+                    if !cov_slice[x] && dst_row[x] == bg_rgba {
+                        dst_row[x] = guide_row[x];
                     }
                 }
-                let blended = self.guide_lut[self.full_picture_fb.pixels[fb_row + x] as usize];
-                rgba[offset] = blended[0];
-                rgba[offset + 1] = blended[1];
-                rgba[offset + 2] = blended[2];
+                for x in x0..x1 {
+                    if !cov_slice[x]
+                        && dst_row[x] == bg_rgba
+                        && !piece
+                            .sprite
+                            .is_opaque(row_off + (x as i32 - hx) as usize)
+                    {
+                        dst_row[x] = guide_row[x];
+                    }
+                }
+                for x in x1..pw {
+                    if !cov_slice[x] && dst_row[x] == bg_rgba {
+                        dst_row[x] = guide_row[x];
+                    }
+                }
+            } else {
+                for x in 0..pw {
+                    if !cov_slice[x] && dst_row[x] == bg_rgba {
+                        dst_row[x] = guide_row[x];
+                    }
+                }
             }
         }
     }
@@ -1497,33 +1583,89 @@ impl PuzzleSession {
                 } else {
                     1.0
                 };
-                render_scene_dissolve_with_scratch(
+                let key = DissolveCacheKey {
+                    previous_frame: anim.previous_frame,
+                    cur_frame: anim.cur_frame,
+                };
+                if cache.dissolve_key != Some(key) {
+                    render_scene_view_with_scratch(
+                        &mut cache.dissolve_prev_fb,
+                        &mut cache.scratch_fb,
+                        &self.asset,
+                        anim.previous_frame,
+                    );
+                    render_scene_view_with_scratch(
+                        &mut cache.dissolve_next_fb,
+                        &mut cache.scratch_fb,
+                        &self.asset,
+                        anim.cur_frame,
+                    );
+                    cache.dissolve_key = Some(key);
+                }
+                apply_dissolve_step(
                     fb,
-                    &mut cache.scratch_fb,
-                    &mut cache.dissolve_next_fb,
-                    &self.asset,
-                    anim.previous_frame,
-                    anim.cur_frame,
+                    &cache.dissolve_prev_fb,
+                    &cache.dissolve_next_fb,
+                    self.asset.uses_ega(),
                     progress,
                 );
+                draw_playfield_border(fb, tbx, SCENE_OFFSET_X, PLAYFIELD_W + 2);
+                if let Some((sound, voice)) = anim.bubble.filter(|_| self.text_enabled)
+                    && let Some(Some(bubble)) = self.asset.sounds[sound].bubbles.get(voice)
+                {
+                    let (fill, ink) = if self.asset.uses_ega() {
+                        (15, 1)
+                    } else {
+                        (248, 16)
+                    };
+                    fb.draw_speech_bubble_offset(bubble, font, SCENE_OFFSET_X, 0, fill, ink);
+                }
             } else {
-                render_scene_view_with_scratch(
-                    fb,
-                    &mut cache.scratch_fb,
-                    &self.asset,
-                    anim.cur_frame,
-                );
-            }
-            draw_playfield_border(fb, tbx, SCENE_OFFSET_X, PLAYFIELD_W + 2);
-            if let Some((sound, voice)) = anim.bubble.filter(|_| self.text_enabled)
-                && let Some(Some(bubble)) = self.asset.sounds[sound].bubbles.get(voice)
-            {
-                let (fill, ink) = if self.asset.uses_ega() {
-                    (15, 1)
-                } else {
-                    (248, 16)
+                let key = AnimFrameCacheKey {
+                    cur_frame: anim.cur_frame,
+                    bubble: anim.bubble.filter(|_| self.text_enabled),
+                    text_enabled: self.text_enabled,
                 };
-                fb.draw_speech_bubble_offset(bubble, font, SCENE_OFFSET_X, 0, fill, ink);
+                let rebuild = cache
+                    .anim_fb
+                    .as_ref()
+                    .is_none_or(|(cached_key, _)| *cached_key != key);
+                if rebuild {
+                    let mut cached = cache
+                        .anim_fb
+                        .take()
+                        .map(|(_, buf)| buf)
+                        .unwrap_or_else(|| Box::new(Framebuffer::new()));
+                    cached.reset_clip();
+                    cached.palette = self.asset.palette;
+                    render_scene_view_with_scratch(
+                        &mut cached,
+                        &mut cache.scratch_fb,
+                        &self.asset,
+                        anim.cur_frame,
+                    );
+                    draw_playfield_border(&mut cached, tbx, SCENE_OFFSET_X, PLAYFIELD_W + 2);
+                    if let Some((sound, voice)) = key.bubble
+                        && let Some(Some(bubble)) = self.asset.sounds[sound].bubbles.get(voice)
+                    {
+                        let (fill, ink) = if self.asset.uses_ega() {
+                            (15, 1)
+                        } else {
+                            (248, 16)
+                        };
+                        cached.draw_speech_bubble_offset(
+                            bubble,
+                            font,
+                            SCENE_OFFSET_X,
+                            0,
+                            fill,
+                            ink,
+                        );
+                    }
+                    cache.anim_fb = Some((key, cached));
+                }
+                fb.pixels
+                    .copy_from_slice(&cache.anim_fb.as_ref().unwrap().1.pixels);
             }
             return;
         }
@@ -1600,6 +1742,73 @@ impl PuzzleSession {
         }
     }
 
+    pub fn hovered_tray_slot(&self, mouse_x: i32, mouse_y: i32) -> Option<usize> {
+        if !self.toolbox_open || !(2..44).contains(&mouse_x) || mouse_y < 30 {
+            return None;
+        }
+        let slot_h = self.tray_slot_height();
+        let slot = ((mouse_y - 30) / slot_h) as usize;
+        let vis = self.visible_tray_slots();
+        if slot < vis && self.tray_scroll + slot < self.tray_order.len() {
+            Some(slot)
+        } else {
+            None
+        }
+    }
+
+    pub fn present_key(
+        &self,
+        mouse_x: i32,
+        mouse_y: i32,
+        picture_guide: bool,
+    ) -> PuzzlePresentKey {
+        if let Some(ref anim) = self.active_anim {
+            let dissolve_step_bits = if anim.transition_mode == 8 {
+                anim.tick_accum.to_bits()
+            } else {
+                0
+            };
+            return PuzzlePresentKey::Anim {
+                puzzle_num: self.puzzle_num,
+                uses_ega: self.asset.uses_ega(),
+                cur_frame: anim.cur_frame,
+                previous_frame: anim.previous_frame,
+                transition_mode: anim.transition_mode,
+                dissolve_step_bits,
+                bubble: anim.bubble.filter(|_| self.text_enabled),
+                text_enabled: self.text_enabled,
+            };
+        }
+        let status_hash = hash_str_opt(self.status_message.as_ref().map(|(s, _)| s.as_str()));
+        if self.solved {
+            return PuzzlePresentKey::Solved {
+                puzzle_num: self.puzzle_num,
+                uses_ega: self.asset.uses_ega(),
+                status_hash,
+            };
+        }
+        let (px, py) = self
+            .keyboard_pointer
+            .map(|(x, y)| (x.round() as i32, y.round() as i32))
+            .unwrap_or((mouse_x, mouse_y));
+        PuzzlePresentKey::Board {
+            puzzle_num: self.puzzle_num,
+            uses_ega: self.asset.uses_ega(),
+            toolbox_open: self.toolbox_open,
+            grid_lines: self.grid_lines,
+            placed_bits: self.placed_bits(),
+            tray_scroll: self.tray_scroll,
+            tray_len: self.tray_order.len(),
+            hovered_slot: self.hovered_tray_slot(mouse_x, mouse_y),
+            hint_blink: self
+                .hint_piece
+                .map(|(idx, rem)| (idx, ((rem * 8.0) as i32) & 1)),
+            status_hash,
+            held_piece_pos: self.held_piece.map(|p| (p, px, py)),
+            picture_guide,
+        }
+    }
+
     fn render_toolbox(&self, fb: &mut Framebuffer, font: &FontAsset, mouse_x: i32, mouse_y: i32) {
         let colors = self.ui_colors;
         fb.fill_rect(0, 0, TOOLBOX_W - 2, SCREEN_H, colors.black);
@@ -1633,14 +1842,14 @@ impl PuzzleSession {
         // Visible unplaced pieces in tray (`y = 30..186`)
         let vis = self.visible_tray_slots();
         let slot_h = self.tray_slot_height();
+        let hovered_slot = self.hovered_tray_slot(mouse_x, mouse_y);
         fb.set_clip(2, 30, TOOLBOX_W - 6, 156);
         for slot in 0..vis {
             let tray_idx = self.tray_scroll + slot;
             if let Some(&pidx) = self.tray_order.get(tray_idx) {
                 let piece = &self.pieces[pidx];
                 let slot_y = 30 + slot as i32 * slot_h;
-                let hovered =
-                    (2..44).contains(&mouse_x) && (slot_y..slot_y + slot_h).contains(&mouse_y);
+                let hovered = hovered_slot == Some(slot);
                 fb.fill_rect(
                     2,
                     slot_y + 1,

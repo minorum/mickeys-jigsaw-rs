@@ -585,10 +585,13 @@ impl Framebuffer {
 
     /// Converts the indexed 320x200 framebuffer into an RGBA8 byte slice (`320 * 200 * 4`).
     pub fn to_rgba8(&self, out: &mut [u8]) {
+        let mut lut = [[0u8; 4]; 256];
+        for (dst, &[r, g, b]) in lut.iter_mut().zip(&self.palette) {
+            *dst = [r, g, b, 255];
+        }
         let (chunks, _) = out.as_chunks_mut::<4>();
         for (&px, dst) in self.pixels.iter().zip(chunks) {
-            let [r, g, b] = self.palette[px as usize];
-            *dst = [r, g, b, 255];
+            *dst = lut[px as usize];
         }
     }
 }
@@ -1023,6 +1026,31 @@ pub fn render_scene_dissolve(
         frame,
         progress,
     );
+}
+
+pub fn apply_dissolve_step(
+    fb: &mut Framebuffer,
+    prev: &Framebuffer,
+    next: &Framebuffer,
+    ega: bool,
+    progress: f32,
+) {
+    if progress >= 1.0 {
+        fb.pixels.copy_from_slice(&next.pixels);
+        return;
+    }
+    fb.pixels.copy_from_slice(&prev.pixels);
+    if progress <= 0.0 {
+        return;
+    }
+    let total = dissolve_order(ega).len();
+    let limit = (progress * total as f32) as usize;
+    let playfield = dissolve_playfield_order(ega);
+    let end = playfield.partition_point(|&(step, _)| (step as usize) < limit);
+    for &(_, target) in &playfield[..end] {
+        let idx = target as usize;
+        fb.pixels[idx] = next.pixels[idx];
+    }
 }
 
 pub fn render_scene_dissolve_with_scratch(
