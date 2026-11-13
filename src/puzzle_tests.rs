@@ -1492,3 +1492,80 @@ fn puzzle_renderer_isolates_caches_across_replaced_sessions_without_assets() {
     assert_ne!(fb_c_reused.palette, fb_a.palette);
     assert_ne!(rgba_c_reused, rgba_a);
 }
+
+#[test]
+fn curved_cut_pieces_have_no_horizontal_bridge_or_gap_without_assets() {
+    let asset = synthetic_puzzle_asset(1, false);
+    for dim in 2..=8 {
+        let session = PuzzleSession::new(1, asset.clone(), dim, true, false, false);
+        let mut coverage = vec![0u8; 270 * 196];
+        for p in &session.pieces {
+            let w = p.sprite.width as usize;
+            let h = p.sprite.sub_h as usize;
+
+            // 1. Every piece must cover its exact pixels once and form a single 4-connected shape.
+            let mut total_opaque = 0usize;
+            for dy in 0..h {
+                for dx in 0..w {
+                    let idx = dy * w + dx;
+                    if p.sprite.is_opaque(idx) {
+                        total_opaque += 1;
+                        let px = p.target_x + dx as i32;
+                        let py = p.target_y + dy as i32;
+                        coverage[(py * 270 + px) as usize] += 1;
+                    }
+                }
+            }
+            let start = (0..w * h).find(|&i| p.sprite.is_opaque(i)).unwrap();
+            let mut seen = vec![false; w * h];
+            let mut stack = vec![start];
+            seen[start] = true;
+            let mut reached = 0usize;
+            while let Some(cur) = stack.pop() {
+                reached += 1;
+                let x = cur % w;
+                let y = cur / w;
+                for (nx, ny) in [
+                    (x.wrapping_sub(1), y),
+                    (x + 1, y),
+                    (x, y.wrapping_sub(1)),
+                    (x, y + 1),
+                ] {
+                    if nx < w && ny < h {
+                        let ni = ny * w + nx;
+                        if !seen[ni] && p.sprite.is_opaque(ni) {
+                            seen[ni] = true;
+                            stack.push(ni);
+                        }
+                    }
+                }
+            }
+            assert_eq!(
+                reached, total_opaque,
+                "dim={dim} piece {} (r={}, c={}) has disconnected pixels ({reached} != {total_opaque})",
+                p.index, p.row, p.col
+            );
+
+            // 2. A downward blank on row r > 0 must not leave a 1px horizontal bridge at y = base_y.
+            if p.row > 0 {
+                let top_row = (p.base_y - p.target_y) as usize;
+                let has_blank_below = (0..p.base_w as usize).any(|dx| {
+                    let lx = (p.base_x - p.target_x) as usize + dx;
+                    !p.sprite.is_opaque((top_row + 1) * w + lx)
+                });
+                if has_blank_below {
+                    let open_at_seam = (0..p.base_w as usize).any(|dx| {
+                        let lx = (p.base_x - p.target_x) as usize + dx;
+                        !p.sprite.is_opaque(top_row * w + lx)
+                    });
+                    assert!(
+                        open_at_seam,
+                        "dim={dim} piece {} (r={}, c={}) has a 1px horizontal bridge across its top blank",
+                        p.index, p.row, p.col
+                    );
+                }
+            }
+        }
+        assert!(coverage.iter().all(|&n| n == 1));
+    }
+}

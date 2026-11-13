@@ -579,6 +579,20 @@ impl PuzzleSession {
                         }));
                         let fill_val = u8::from(dir == out_dir);
                         mask_fb.fill_polygon(&poly, fill_val);
+                        // `fill_polygon` skips `min_y` on horizontal edges extending downward (`dir == 1`),
+                        // which would leave a 1px bridge across downward blanks and a 1px gap above tabs.
+                        if !is_vert && dir == 1 {
+                            let (mut x_min, mut x_max) = (i32::MAX, i32::MIN);
+                            for &(px, py) in &poly {
+                                if py == ey {
+                                    x_min = x_min.min(px);
+                                    x_max = x_max.max(px);
+                                }
+                            }
+                            if x_min <= x_max {
+                                mask_fb.fill_rect(x_min, ey, x_max - x_min + 1, 1, fill_val);
+                            }
+                        }
                     }
                 }
 
