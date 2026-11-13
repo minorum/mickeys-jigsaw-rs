@@ -7,6 +7,7 @@
 
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::assets::{
     FrameCommand, PrintAsset, PuzzleAsset, SceneRecord, SequencePlayback, Sprite8061,
@@ -201,6 +202,7 @@ enum PointerVisualState {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PuzzlePresentKey {
+    session_id: u64,
     puzzle_num: usize,
     asset_rev: u64,
     visual_rev: u64,
@@ -218,8 +220,11 @@ pub(crate) fn dissolve_progress(anim: &AnimationPlayer) -> f32 {
     }
 }
 
+static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+
 /// Complete active puzzle session state (`seg_0e59`, `seg_0b43`).
 pub struct PuzzleSession {
+    session_id: u64,
     pub(crate) puzzle_num: usize,
     pub(crate) asset: PuzzleAsset,
     pub(crate) grid_dim: usize,
@@ -261,6 +266,7 @@ impl PuzzleSession {
         let full_picture_fb = Self::render_full_picture(&asset);
 
         let mut session = Self {
+            session_id: NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             puzzle_num,
             asset,
             grid_dim: dim,
@@ -301,6 +307,10 @@ impl PuzzleSession {
     fn bump_board(&mut self) {
         self.board_rev = self.board_rev.wrapping_add(1);
         self.visual_rev = self.visual_rev.wrapping_add(1);
+    }
+
+    pub fn session_id(&self) -> u64 {
+        self.session_id
     }
 
     pub fn puzzle_num(&self) -> usize {
@@ -1400,6 +1410,7 @@ impl PuzzleSession {
             }
         };
         PuzzlePresentKey {
+            session_id: self.session_id,
             puzzle_num: self.puzzle_num,
             asset_rev: self.asset_rev,
             visual_rev: self.visual_rev,

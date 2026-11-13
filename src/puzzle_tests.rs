@@ -1417,7 +1417,8 @@ fn present_key_tracks_idle_hover_guide_timer_and_dissolve_without_assets() {
 fn puzzle_renderer_cache_invalidates_on_board_and_video_mode_changes_without_assets() {
     let (tbx, font) = synthetic_toolbox_and_font();
     let vga = synthetic_puzzle_asset(1, false);
-    let ega = synthetic_puzzle_asset(1, true);
+    let mut ega = synthetic_puzzle_asset(1, true);
+    ega.palette[1] = [0, 85, 255];
     let mut session = PuzzleSession::new(1, vga, 2, true, false, false);
     let mut renderer = PuzzleRenderer::new();
 
@@ -1435,4 +1436,62 @@ fn puzzle_renderer_cache_invalidates_on_board_and_video_mode_changes_without_ass
     let mut fb_ega = Framebuffer::new();
     renderer.render(&session, &mut fb_ega, &tbx, &font, 160, 100);
     assert_ne!(fb_grid.pixels, fb_ega.pixels);
+}
+
+#[test]
+fn puzzle_renderer_isolates_caches_across_replaced_sessions_without_assets() {
+    let (tbx, font) = synthetic_toolbox_and_font();
+    let vga = synthetic_puzzle_asset(1, false);
+    let mut ega = synthetic_puzzle_asset(1, true);
+    ega.palette[1] = [0, 85, 255];
+
+    let session_a = PuzzleSession::new(1, vga.clone(), 2, false, false, false);
+    let session_b = PuzzleSession::new(1, vga, 4, true, true, false);
+    let session_c = PuzzleSession::new(1, ega, 2, false, false, false);
+
+    assert_ne!(
+        session_a.present_key(120, 80, true),
+        session_b.present_key(120, 80, true)
+    );
+    assert_ne!(
+        session_a.present_key(120, 80, true),
+        session_c.present_key(120, 80, true)
+    );
+
+    let mut reused = PuzzleRenderer::new();
+
+    let mut fb_a = Framebuffer::new();
+    reused.render(&session_a, &mut fb_a, &tbx, &font, 160, 100);
+    let mut rgba_a = vec![0u8; 320 * 200 * 4];
+    fb_a.to_rgba8(&mut rgba_a);
+    reused.blend_picture_guide(&session_a, &mut rgba_a, 160, 100);
+
+    // Same puzzle_num and initial revision counters, different grid settings
+    let mut fb_b_reused = Framebuffer::new();
+    reused.render(&session_b, &mut fb_b_reused, &tbx, &font, 160, 100);
+    let mut fb_b_fresh = Framebuffer::new();
+    PuzzleRenderer::new().render(&session_b, &mut fb_b_fresh, &tbx, &font, 160, 100);
+    assert_eq!(fb_b_reused.pixels, fb_b_fresh.pixels);
+    assert_eq!(fb_b_reused.palette, fb_b_fresh.palette);
+    assert_ne!(fb_b_reused.pixels, fb_a.pixels);
+
+    // Same puzzle_num, same grid settings, different video mode (EGA)
+    let mut fb_c_reused = Framebuffer::new();
+    reused.render(&session_c, &mut fb_c_reused, &tbx, &font, 160, 100);
+    let mut rgba_c_reused = vec![0u8; 320 * 200 * 4];
+    fb_c_reused.to_rgba8(&mut rgba_c_reused);
+    reused.blend_picture_guide(&session_c, &mut rgba_c_reused, 160, 100);
+
+    let mut fresh_c = PuzzleRenderer::new();
+    let mut fb_c_fresh = Framebuffer::new();
+    fresh_c.render(&session_c, &mut fb_c_fresh, &tbx, &font, 160, 100);
+    let mut rgba_c_fresh = vec![0u8; 320 * 200 * 4];
+    fb_c_fresh.to_rgba8(&mut rgba_c_fresh);
+    fresh_c.blend_picture_guide(&session_c, &mut rgba_c_fresh, 160, 100);
+
+    assert_eq!(fb_c_reused.pixels, fb_c_fresh.pixels);
+    assert_eq!(fb_c_reused.palette, fb_c_fresh.palette);
+    assert_eq!(rgba_c_reused, rgba_c_fresh);
+    assert_ne!(fb_c_reused.palette, fb_a.palette);
+    assert_ne!(rgba_c_reused, rgba_a);
 }

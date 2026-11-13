@@ -39,12 +39,21 @@ impl UiColors {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct BoardCacheKey {
+    session_id: u64,
+    asset_rev: u64,
+    board_rev: u64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct PlacedMaskKey {
+    session_id: u64,
     asset_rev: u64,
     board_rev: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct AnimFrameCacheKey {
+    session_id: u64,
     asset_rev: u64,
     cur_frame: usize,
     bubble: Option<(usize, usize)>,
@@ -52,6 +61,7 @@ struct AnimFrameCacheKey {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct DissolveCacheKey {
+    session_id: u64,
     asset_rev: u64,
     previous_frame: usize,
     cur_frame: usize,
@@ -63,7 +73,7 @@ struct RenderCache {
     dissolve_next_fb: Box<Framebuffer>,
     dissolve_key: Option<DissolveCacheKey>,
     anim_fb: Option<(AnimFrameCacheKey, Box<Framebuffer>)>,
-    placed_mask: Option<(u64, u64, Vec<bool>)>,
+    placed_mask: Option<(PlacedMaskKey, Vec<bool>)>,
     board_fb: Option<(BoardCacheKey, Box<Framebuffer>)>,
 }
 
@@ -80,21 +90,16 @@ impl RenderCache {
         }
     }
 
-    fn ensure_placed_mask(
-        &mut self,
-        asset_rev: u64,
-        board_rev: u64,
-        pieces: &[JigsawPiece],
-    ) -> &[bool] {
+    fn ensure_placed_mask(&mut self, key: PlacedMaskKey, pieces: &[JigsawPiece]) -> &[bool] {
         let rebuild = self
             .placed_mask
             .as_ref()
-            .is_none_or(|(ar, br, _)| *ar != asset_rev || *br != board_rev);
+            .is_none_or(|(cached_key, _)| *cached_key != key);
         if rebuild {
             let mut placed_cov = self
                 .placed_mask
                 .take()
-                .map(|(_, _, mut buf)| {
+                .map(|(_, mut buf)| {
                     buf.fill(false);
                     buf
                 })
@@ -121,9 +126,9 @@ impl RenderCache {
                     }
                 }
             }
-            self.placed_mask = Some((asset_rev, board_rev, placed_cov));
+            self.placed_mask = Some((key, placed_cov));
         }
-        &self.placed_mask.as_ref().unwrap().2
+        &self.placed_mask.as_ref().unwrap().1
     }
 
     fn ensure_board_fb(
@@ -270,10 +275,11 @@ fn build_guide_playfield(full_picture_fb: &Framebuffer, board_bg: u8) -> Vec<[u8
 /// Cached software renderer for [`PuzzleSession`].
 ///
 /// All derived palette colors, picture-guide LUTs, board layers, and animation/dissolve
-/// framebuffers are keyed off `PuzzleSession`'s monotonic `asset_rev` and `board_rev`
-/// counters, preventing stale caches across video-mode switches or session restarts.
+/// framebuffers are keyed off `PuzzleSession`'s unique `session_id` and monotonic
+/// `asset_rev` / `board_rev` counters, preventing stale caches across session
+/// replacements or video-mode switches.
 pub struct PuzzleRenderer {
-    synced_asset: Option<(usize, u64)>,
+    synced_asset: Option<(u64, u64)>,
     ui_colors: UiColors,
     guide_playfield: Vec<[u8; 4]>,
     cache: Box<RenderCache>,
@@ -304,8 +310,17 @@ impl PuzzleRenderer {
         }
     }
 
+    /// Clears all cached derived palette, guide, board, and animation buffers.
+    pub fn reset_caches(&mut self) {
+        self.synced_asset = None;
+        self.cache.dissolve_key = None;
+        self.cache.anim_fb = None;
+        self.cache.placed_mask = None;
+        self.cache.board_fb = None;
+    }
+
     fn sync_asset(&mut self, session: &PuzzleSession) {
-        let key = (session.puzzle_num(), session.asset_rev());
+        let key = (session.session_id(), session.asset_rev());
         if self.synced_asset == Some(key) {
             return;
         }
@@ -340,8 +355,11 @@ impl PuzzleRenderer {
         let pfx = session.playfield_x();
         let pfy = session.playfield_y();
         let placed_cov = self.cache.ensure_placed_mask(
-            session.asset_rev(),
-            session.board_rev(),
+            PlacedMaskKey {
+                session_id: session.session_id(),
+                asset_rev: session.asset_rev(),
+                board_rev: session.board_rev(),
+            },
             session.pieces(),
         );
         let held_bounds = session.held_piece().map(|index| {
@@ -453,6 +471,7 @@ impl PuzzleRenderer {
         let pfx = session.playfield_x();
         let pfy = session.playfield_y();
         let board_key = BoardCacheKey {
+            session_id: session.session_id(),
             asset_rev: session.asset_rev(),
             board_rev: session.board_rev(),
         };
@@ -507,6 +526,7 @@ impl PuzzleRenderer {
         if anim.transition_mode == 8 {
             let progress = dissolve_progress(anim);
             let key = DissolveCacheKey {
+                session_id: session.session_id(),
                 asset_rev: session.asset_rev(),
                 previous_frame: anim.previous_frame,
                 cur_frame: anim.cur_frame,
@@ -542,6 +562,7 @@ impl PuzzleRenderer {
             }
         } else {
             let key = AnimFrameCacheKey {
+                session_id: session.session_id(),
                 asset_rev: session.asset_rev(),
                 cur_frame: anim.cur_frame,
                 bubble,
