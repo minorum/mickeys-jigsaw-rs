@@ -567,8 +567,7 @@ pub struct AudioEngine {
     _stream: Option<OutputStream>,
     stream_handle: Option<OutputStreamHandle>,
     sfx_sinks: Vec<Sink>,
-    common_caption: Option<(CommonSound, f32)>,
-    common_caption_rev: Option<u64>,
+    common_caption: Option<(CommonSound, f32, u64)>,
     next_caption_rev: u64,
     music_sink: Option<Sink>,
     pub music_enabled: bool,
@@ -599,21 +598,13 @@ impl AudioEngine {
             nnv_banks.insert("BUBGUM".to_string(), bub);
         }
 
-        // PROG.ESS
-        if let Ok(prog_ess) = fs::read(game_dir.join("PROG.ESS"))
-            && let Ok(chunks) = split_multi_resource(&prog_ess)
-        {
-            for (i, ch) in chunks.iter().enumerate() {
-                nnv_banks.insert(format!("PROG_{}", i), ch.to_vec());
-            }
-        }
-
-        // DATA.ESS
-        if let Ok(data_ess) = fs::read(game_dir.join("DATA.ESS"))
-            && let Ok(chunks) = split_multi_resource(&data_ess)
-        {
-            for (i, ch) in chunks.iter().enumerate() {
-                nnv_banks.insert(format!("DATA_{}", i), ch.to_vec());
+        for stem in ["PROG", "DATA"] {
+            if let Ok(raw) = fs::read(game_dir.join(format!("{stem}.ESS")))
+                && let Ok(chunks) = split_multi_resource(&raw)
+            {
+                for (i, ch) in chunks.iter().enumerate() {
+                    nnv_banks.insert(format!("{stem}_{i}"), ch.to_vec());
+                }
             }
         }
 
@@ -638,7 +629,6 @@ impl AudioEngine {
             stream_handle: None,
             sfx_sinks: Vec::new(),
             common_caption: None,
-            common_caption_rev: None,
             next_caption_rev: 0,
             music_sink: None,
             music_enabled,
@@ -678,31 +668,27 @@ impl AudioEngine {
         let duration = (samples.len() as f32 / NNV_SAMPLE_RATE as f32)
             .max(event.caption().len() as f32 / 25.0)
             .max(2.0);
-        self.common_caption = Some((event, duration));
         self.next_caption_rev = self.next_caption_rev.wrapping_add(1);
-        self.common_caption_rev = Some(self.next_caption_rev);
+        self.common_caption = Some((event, duration, self.next_caption_rev));
         if self.sfx_enabled {
             self.play_effect(samples, NNV_SAMPLE_RATE);
         }
     }
 
     pub fn common_caption(&self) -> Option<&'static str> {
-        self.common_caption
-            .as_ref()
-            .map(|(event, _)| event.caption())
+        self.common_caption.map(|(event, _, _)| event.caption())
     }
 
     /// Returns a revision token for the currently displayed common caption, or `None` when idle.
     pub fn caption_key(&self) -> Option<u64> {
-        self.common_caption_rev
+        self.common_caption.map(|(_, _, rev)| rev)
     }
 
     pub fn update(&mut self, dt: f32) {
-        if let Some((_, remaining)) = self.common_caption.as_mut() {
+        if let Some((_, remaining, _)) = self.common_caption.as_mut() {
             *remaining -= dt.max(0.0);
             if *remaining <= 0.0 {
                 self.common_caption = None;
-                self.common_caption_rev = None;
             }
         }
     }
@@ -758,7 +744,6 @@ impl AudioEngine {
 
     pub fn stop_all(&mut self) {
         self.common_caption = None;
-        self.common_caption_rev = None;
         self.sfx_sinks.clear();
         if let Some(m) = self.music_sink.take() {
             m.stop();
@@ -1195,5 +1180,24 @@ mod tests {
         assert!(!first.is_empty());
         assert_eq!(first, second);
         assert!(engine.decoded_nnv_samples("MISSING", 0).is_empty());
+    }
+
+    #[test]
+    fn cached_audio_playback_shares_pcm_buffer_without_copying() {
+        let shared: Arc<[i16]> = vec![120i16, -240, 360, -480].into();
+        let src_a = SampleSlice::new(NNV_SAMPLE_RATE, Arc::clone(&shared));
+        let src_b = SampleSlice::new(NNV_SAMPLE_RATE, Arc::clone(&shared));
+        assert_eq!(Arc::strong_count(&shared), 3);
+        assert!(Arc::ptr_eq(&src_a.samples, &shared));
+        assert!(Arc::ptr_eq(&src_b.samples, &shared));
+        assert_eq!(src_a.channels(), 1);
+        assert_eq!(src_a.sample_rate(), NNV_SAMPLE_RATE);
+        assert_eq!(src_a.collect::<Vec<_>>(), shared.as_ref());
+        assert_eq!(src_b.collect::<Vec<_>>(), shared.as_ref());
+        assert_eq!(Arc::strong_count(&shared), 1);
+
+        let static_src = SampleSlice::new(AUDIO_SAMPLE_RATE, error_buzz_samples());
+        assert_eq!(static_src.sample_rate(), AUDIO_SAMPLE_RATE);
+        assert_eq!(static_src.count(), error_buzz_samples().len());
     }
 }

@@ -286,111 +286,35 @@ impl Framebuffer {
             let row_off = (sy as usize) * stride;
             let dst_row = (py * SCREEN_W) as usize;
             let dst_slice = &mut self.pixels[dst_row + dst_x0..dst_row + dst_x0 + len];
-            match mode {
-                1 if !flip_x => {
-                    let src_start = row_off + (sub_x + dx_start) as usize;
-                    dst_slice.copy_from_slice(&spr.pixels[src_start..src_start + len]);
-                }
-                1 => {
-                    let src_end = row_off + (sub_x + w - dx_start) as usize;
-                    let src_row = &spr.pixels[src_end - len..src_end];
+            let src_start = if flip_x {
+                row_off + (sub_x + w - dx_start) as usize - len
+            } else {
+                row_off + (sub_x + dx_start) as usize
+            };
+            let src_row = &spr.pixels[src_start..src_start + len];
+            let mask_row = opacity.map(|m| &m[src_start..src_start + len]);
+            let solid = (mode == 2).then_some(solid_color);
+            match (mode == 1, flip_x) {
+                (true, false) => dst_slice.copy_from_slice(src_row),
+                (true, true) => {
                     for (dst, &src) in dst_slice.iter_mut().zip(src_row.iter().rev()) {
                         *dst = src;
                     }
                 }
-                2 => {
-                    let trans = spr.transparent_color;
-                    if !flip_x {
-                        let src_start = row_off + (sub_x + dx_start) as usize;
-                        if let Some(mask) = opacity {
-                            for (dst, &opaque) in
-                                dst_slice.iter_mut().zip(&mask[src_start..src_start + len])
-                            {
-                                if opaque {
-                                    *dst = solid_color;
-                                }
-                            }
-                        } else {
-                            for (dst, &px) in dst_slice
-                                .iter_mut()
-                                .zip(&spr.pixels[src_start..src_start + len])
-                            {
-                                if px != trans {
-                                    *dst = solid_color;
-                                }
-                            }
-                        }
-                    } else {
-                        let src_end = row_off + (sub_x + w - dx_start) as usize;
-                        if let Some(mask) = opacity {
-                            for (dst, &opaque) in dst_slice
-                                .iter_mut()
-                                .zip(mask[src_end - len..src_end].iter().rev())
-                            {
-                                if opaque {
-                                    *dst = solid_color;
-                                }
-                            }
-                        } else {
-                            for (dst, &px) in dst_slice
-                                .iter_mut()
-                                .zip(spr.pixels[src_end - len..src_end].iter().rev())
-                            {
-                                if px != trans {
-                                    *dst = solid_color;
-                                }
-                            }
-                        }
-                    }
-                }
-                _ => {
-                    let trans = spr.transparent_color;
-                    if !flip_x {
-                        let src_start = row_off + (sub_x + dx_start) as usize;
-                        if let Some(mask) = opacity {
-                            for ((dst, &px), &opaque) in dst_slice
-                                .iter_mut()
-                                .zip(&spr.pixels[src_start..src_start + len])
-                                .zip(&mask[src_start..src_start + len])
-                            {
-                                if opaque {
-                                    *dst = px;
-                                }
-                            }
-                        } else {
-                            for (dst, &px) in dst_slice
-                                .iter_mut()
-                                .zip(&spr.pixels[src_start..src_start + len])
-                            {
-                                if px != trans {
-                                    *dst = px;
-                                }
-                            }
-                        }
-                    } else {
-                        let src_end = row_off + (sub_x + w - dx_start) as usize;
-                        if let Some(mask) = opacity {
-                            for ((dst, &px), &opaque) in dst_slice
-                                .iter_mut()
-                                .zip(spr.pixels[src_end - len..src_end].iter().rev())
-                                .zip(mask[src_end - len..src_end].iter().rev())
-                            {
-                                if opaque {
-                                    *dst = px;
-                                }
-                            }
-                        } else {
-                            for (dst, &px) in dst_slice
-                                .iter_mut()
-                                .zip(spr.pixels[src_end - len..src_end].iter().rev())
-                            {
-                                if px != trans {
-                                    *dst = px;
-                                }
-                            }
-                        }
-                    }
-                }
+                (false, false) => blit_masked_row(
+                    dst_slice,
+                    src_row.iter(),
+                    mask_row.map(|m| m.iter()),
+                    spr.transparent_color,
+                    solid,
+                ),
+                (false, true) => blit_masked_row(
+                    dst_slice,
+                    src_row.iter().rev(),
+                    mask_row.map(|m| m.iter().rev()),
+                    spr.transparent_color,
+                    solid,
+                ),
             }
         }
     }
@@ -538,10 +462,6 @@ impl Framebuffer {
         }
     }
 
-    pub fn draw_polygon_outline(&mut self, pts: &[(i32, i32)], color: u8) {
-        self.draw_polygon_outline_offset(pts, 0, 0, color);
-    }
-
     pub fn draw_polygon_outline_offset(&mut self, pts: &[(i32, i32)], ox: i32, oy: i32, color: u8) {
         if pts.len() < 2 {
             return;
@@ -592,6 +512,49 @@ impl Framebuffer {
         let (chunks, _) = out.as_chunks_mut::<4>();
         for (&px, dst) in self.pixels.iter().zip(chunks) {
             *dst = lut[px as usize];
+        }
+    }
+}
+
+#[inline(always)]
+fn blit_masked_row<'a, P, M>(
+    dst_slice: &mut [u8],
+    src_row: P,
+    mask_row: Option<M>,
+    trans: u8,
+    solid: Option<u8>,
+) where
+    P: Iterator<Item = &'a u8>,
+    M: Iterator<Item = &'a bool>,
+{
+    match (mask_row, solid) {
+        (Some(mask), Some(c)) => {
+            for (dst, &op) in dst_slice.iter_mut().zip(mask) {
+                if op {
+                    *dst = c;
+                }
+            }
+        }
+        (Some(mask), None) => {
+            for ((dst, &px), &op) in dst_slice.iter_mut().zip(src_row).zip(mask) {
+                if op {
+                    *dst = px;
+                }
+            }
+        }
+        (None, Some(c)) => {
+            for (dst, &px) in dst_slice.iter_mut().zip(src_row) {
+                if px != trans {
+                    *dst = c;
+                }
+            }
+        }
+        (None, None) => {
+            for (dst, &px) in dst_slice.iter_mut().zip(src_row) {
+                if px != trans {
+                    *dst = px;
+                }
+            }
         }
     }
 }
@@ -1041,6 +1004,17 @@ pub fn dissolve_visible_step(ega: bool, progress: f32) -> usize {
     playfield.partition_point(|&(step, _)| (step as usize) < limit)
 }
 
+fn overlay_dissolve_pixels(fb: &mut Framebuffer, next: &Framebuffer, ega: bool, progress: f32) {
+    let end = dissolve_visible_step(ega, progress);
+    if end == 0 {
+        return;
+    }
+    for &(_, target) in &dissolve_playfield_order(ega)[..end] {
+        let idx = target as usize;
+        fb.pixels[idx] = next.pixels[idx];
+    }
+}
+
 pub fn apply_dissolve_step(
     fb: &mut Framebuffer,
     prev: &Framebuffer,
@@ -1053,15 +1027,7 @@ pub fn apply_dissolve_step(
         return;
     }
     fb.pixels.copy_from_slice(&prev.pixels);
-    let end = dissolve_visible_step(ega, progress);
-    if end == 0 {
-        return;
-    }
-    let playfield = dissolve_playfield_order(ega);
-    for &(_, target) in &playfield[..end] {
-        let idx = target as usize;
-        fb.pixels[idx] = next.pixels[idx];
-    }
+    overlay_dissolve_pixels(fb, next, ega, progress);
 }
 
 pub fn render_scene_dissolve_with_scratch(
@@ -1082,15 +1048,7 @@ pub fn render_scene_dissolve_with_scratch(
         return;
     }
     render_scene_view_with_scratch(next, scratch, puzzle, frame);
-    let ega = puzzle.uses_ega();
-    let total = dissolve_order(ega).len();
-    let limit = (progress * total as f32) as usize;
-    let playfield = dissolve_playfield_order(ega);
-    let end = playfield.partition_point(|&(step, _)| (step as usize) < limit);
-    for &(_, target) in &playfield[..end] {
-        let idx = target as usize;
-        fb.pixels[idx] = next.pixels[idx];
-    }
+    overlay_dissolve_pixels(fb, next, puzzle.uses_ega(), progress);
 }
 
 pub fn render_scene_view(fb: &mut Framebuffer, puzzle: &PuzzleAsset, frame_idx: usize) {

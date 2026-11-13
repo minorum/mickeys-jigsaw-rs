@@ -79,46 +79,28 @@ impl SetupMenu {
 
     /// Toggles or cycles the currently selected setting; returns `true` if "Done / Return to Game" was activated.
     pub fn activate_or_cycle(&mut self, _dir: i32, game_dir: &Path) -> bool {
+        let toggle = |v: &mut u16| *v = u16::from(*v == 0);
         match self.selected_row {
-            0 => {
-                self.prefs.video_mode = if self.prefs.video_mode >= 2 { 1 } else { 2 };
-                self.revision = self.revision.wrapping_add(1);
-            }
-            1 => {
-                self.prefs.music_on = u16::from(self.prefs.music_on == 0);
-                self.revision = self.revision.wrapping_add(1);
-            }
-            2 => {
-                self.prefs.sfx_on = u16::from(self.prefs.sfx_on == 0);
-                self.revision = self.revision.wrapping_add(1);
-            }
-            3 => {
-                self.prefs.timer_on = u16::from(self.prefs.timer_on == 0);
-                self.revision = self.revision.wrapping_add(1);
-            }
-            4 => {
-                self.prefs.grid_lines_on = u16::from(self.prefs.grid_lines_on == 0);
-                self.revision = self.revision.wrapping_add(1);
-            }
-            5 => {
-                self.prefs.text_msg_on = u16::from(self.prefs.text_msg_on == 0);
-                self.revision = self.revision.wrapping_add(1);
-            }
-            6 => {
-                // Save to `mjp_config.pre` so original `MJP.PRE` is never modified
-                match self.prefs.save(&game_dir.join("mjp_config.pre")) {
-                    Ok(()) => {
-                        self.clear_error();
-                        return true;
-                    }
-                    Err(err) => {
-                        self.error = Some(err);
-                        self.revision = self.revision.wrapping_add(1);
-                    }
+            0 => self.prefs.video_mode = if self.prefs.video_mode >= 2 { 1 } else { 2 },
+            1 => toggle(&mut self.prefs.music_on),
+            2 => toggle(&mut self.prefs.sfx_on),
+            3 => toggle(&mut self.prefs.timer_on),
+            4 => toggle(&mut self.prefs.grid_lines_on),
+            5 => toggle(&mut self.prefs.text_msg_on),
+            6 => match self.prefs.save(&game_dir.join("mjp_config.pre")) {
+                Ok(()) => {
+                    self.clear_error();
+                    return true;
                 }
-            }
-            _ => {}
+                Err(err) => {
+                    self.error = Some(err);
+                    self.revision = self.revision.wrapping_add(1);
+                    return false;
+                }
+            },
+            _ => return false,
         }
+        self.revision = self.revision.wrapping_add(1);
         false
     }
 

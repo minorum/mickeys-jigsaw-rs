@@ -26,6 +26,20 @@ fn le_u32(buf: &[u8], off: usize) -> u32 {
     u32::from_le_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]])
 }
 
+fn read_file(path: &Path) -> Result<Vec<u8>, String> {
+    fs::read(path).map_err(|e| format!("Failed to read {path:?}: {e}"))
+}
+
+fn read_da(path: &Path) -> Result<Vec<u8>, String> {
+    decompress_da(&read_file(path)?)
+}
+
+fn copy_palette(dst: &mut [[u8; 3]; 256], src: &[u8], count: usize) {
+    for (color, &rgb) in dst.iter_mut().take(count).zip(src.as_chunks::<3>().0) {
+        *color = rgb;
+    }
+}
+
 #[inline]
 fn read_tagged_chunk<'a>(
     buf: &'a [u8],
@@ -63,8 +77,7 @@ pub struct FontAsset {
 
 impl FontAsset {
     pub fn load(path: &Path) -> Result<Self, String> {
-        let data = fs::read(path).map_err(|e| format!("Failed to read {:?}: {}", path, e))?;
-        Self::from_bytes(&data)
+        Self::from_bytes(&read_file(path)?)
     }
 
     pub fn from_bytes(data: &[u8]) -> Result<Self, String> {
@@ -165,6 +178,27 @@ pub struct Sprite8061 {
 }
 
 impl Sprite8061 {
+    pub fn from_8bpp(
+        width: i32,
+        height: i32,
+        transparent_color: u8,
+        pixels: Vec<u8>,
+        opacity: Vec<bool>,
+    ) -> Self {
+        Self {
+            stride: width as u16,
+            height: height as u16,
+            transparent_color,
+            bpp: 8,
+            sub_x: 0,
+            sub_y: 0,
+            width: width as u16,
+            sub_h: height as u16,
+            pixels,
+            opacity: Some(opacity),
+        }
+    }
+
     pub fn is_opaque(&self, index: usize) -> bool {
         self.pixels.get(index).is_some_and(|&color| {
             self.opacity
@@ -212,26 +246,16 @@ impl Sprite8061 {
             let copy_len = raw.len().min(total_px);
             pixels.extend_from_slice(&raw[..copy_len]);
             pixels.resize(total_px, transparent_color);
-        } else if bpp == 4 {
-            // 4-bit packed nibbles (`TND0` / EGA): high nibble first, then low nibble
-            let row_bytes = (stride as usize).div_ceil(2);
-            for y in 0..(height as usize) {
-                let row = &raw[y * row_bytes..];
-                for x in 0..(stride as usize) {
-                    let b = row[x >> 1];
-                    let px = if (x & 1) == 0 { b >> 4 } else { b & 0x0F };
-                    pixels.push(px);
-                }
-            }
         } else {
-            // 2-bit packed crumbs (CGA)
-            let row_bytes = (stride as usize).div_ceil(4);
+            // 4-bit (EGA) or 2-bit (CGA) packed pixels, MSB first
+            let ppb = 8 / bpp as usize;
+            let mask = (1u8 << bpp) - 1;
+            let row_bytes = (stride as usize).div_ceil(ppb);
             for y in 0..(height as usize) {
                 let row = &raw[y * row_bytes..];
                 for x in 0..(stride as usize) {
-                    let b = row[x >> 2];
-                    let shift = 6 - ((x & 3) * 2);
-                    pixels.push((b >> shift) & 0x03);
+                    let shift = (ppb - 1 - (x % ppb)) * bpp as usize;
+                    pixels.push((row[x / ppb] >> shift) & mask);
                 }
             }
         }
@@ -262,8 +286,7 @@ pub struct ToolboxAsset {
 
 impl ToolboxAsset {
     pub fn load(path: &Path, chunk_idx: usize) -> Result<Self, String> {
-        let raw = fs::read(path).map_err(|e| format!("Failed to read {:?}: {}", path, e))?;
-        let dec = decompress_da(&raw)?;
+        let dec = read_da(path)?;
         let chunks = split_multi_resource(&dec)?;
         let buf = chunks
             .get(chunk_idx)
@@ -320,9 +343,7 @@ impl ToolboxAsset {
             if colors.len() < count * 3 {
                 return Err(format!("Truncated toolbox palette for {count} colors"));
             }
-            for (index, color) in palette.iter_mut().take(count).enumerate() {
-                color.copy_from_slice(&colors[index * 3..index * 3 + 3]);
-            }
+            copy_palette(&mut palette, colors, count);
         }
         Ok(Self { palette, sprites })
     }
@@ -583,16 +604,11 @@ impl PuzzleAsset {
                 if chunk.len() < 48 {
                     return Err("Truncated puzzle palette".to_string());
                 }
-                if chunk.len() >= 768 {
-                    for (i, color) in palette.iter_mut().enumerate() {
-                        color.copy_from_slice(&chunk[i * 3..i * 3 + 3]);
-                    }
-                } else {
-                    for (i, color) in palette.iter_mut().take(16).enumerate() {
-                        let off = i * 3;
-                        *color = [chunk[off], chunk[off + 1], chunk[off + 2]];
-                    }
-                }
+                copy_palette(
+                    &mut palette,
+                    chunk,
+                    if chunk.len() >= 768 { 256 } else { 16 },
+                );
             } else if tag == b"MCG0" || tag == b"TND0" || tag == b"EGA0" || tag == b"CGA0" {
                 main_chunk = Some(chunk);
                 break;
@@ -680,33 +696,28 @@ impl PuzzleAsset {
                 return Err("Invalid frame command size".to_string());
             }
             let sub = &rec[sp..sp + csz];
-            let minimum = match ctype {
-                0x0020 | 0x0030 => 6,
-                0x0040 | 0x0060 => 12,
-                0x0050 => 16,
-                0x0080 => 14,
-                0x0090 => 28,
-                _ => 4,
+            let need = |min: usize| {
+                (csz >= min)
+                    .then_some(sub)
+                    .ok_or_else(|| format!("Truncated frame command {ctype:#06x}"))
             };
-            if csz < minimum {
-                return Err(format!("Truncated frame command {ctype:#06x}"));
-            }
             match ctype {
                 0x0020 => {
+                    let sub = need(6)?;
                     let raw_idx = le_u16(sub, 4);
-                    let snd_idx = if raw_idx == 0 || raw_idx == 0x7FFF {
-                        None
-                    } else {
-                        Some((raw_idx - 1) as usize)
-                    };
+                    let snd_idx =
+                        (raw_idx != 0 && raw_idx != 0x7FFF).then(|| (raw_idx - 1) as usize);
                     commands.push(FrameCommand::Sound { snd_idx });
                 }
                 0x0030 => {
-                    let raw = le_u16(sub, 4);
-                    let ticks = (raw >> 6) & 0x03FF;
-                    commands.push(FrameCommand::Delay { raw, ticks });
+                    let raw = le_u16(need(6)?, 4);
+                    commands.push(FrameCommand::Delay {
+                        raw,
+                        ticks: (raw >> 6) & 0x03FF,
+                    });
                 }
                 0x0040 => {
+                    let sub = need(12)?;
                     commands.push(FrameCommand::SubFrame {
                         dx: le_i16(sub, 4),
                         dy: le_i16(sub, 6),
@@ -715,6 +726,7 @@ impl PuzzleAsset {
                     });
                 }
                 0x0050 => {
+                    let sub = need(16)?;
                     commands.push(FrameCommand::Rect {
                         x: le_i16(sub, 4),
                         y: le_i16(sub, 6),
@@ -725,27 +737,26 @@ impl PuzzleAsset {
                     });
                 }
                 0x0060 => {
-                    let raw_id = le_u16(sub, 8) as usize;
-                    // `raw_id > 0` is 1-based in the file; `0` maps to `0`.
+                    let sub = need(12)?;
                     commands.push(FrameCommand::Sprite {
                         x: le_i16(sub, 4),
                         y: le_i16(sub, 6),
-                        sprite_idx: raw_id.saturating_sub(1),
+                        sprite_idx: (le_u16(sub, 8) as usize).saturating_sub(1),
                         flags: le_u16(sub, 10),
                     });
                 }
                 0x0080 => {
-                    let raw_id = le_u16(sub, 8) as usize;
+                    let sub = need(14)?;
                     commands.push(FrameCommand::Text {
                         x: le_i16(sub, 4),
                         y: le_i16(sub, 6),
-                        res_idx: raw_id.saturating_sub(1),
+                        res_idx: (le_u16(sub, 8) as usize).saturating_sub(1),
                         flags: le_u16(sub, 10),
                         font_and_color: le_u16(sub, 12),
                     });
                 }
                 0x0090 => {
-                    let raw_id = le_u16(sub, 8) as usize;
+                    let sub = need(28)?;
                     let mut params = [0i16; 8];
                     for (pi, param) in params.iter_mut().enumerate() {
                         *param = le_i16(sub, 12 + pi * 2);
@@ -753,7 +764,7 @@ impl PuzzleAsset {
                     commands.push(FrameCommand::Polygon {
                         x: le_i16(sub, 4),
                         y: le_i16(sub, 6),
-                        res_idx: raw_id.saturating_sub(1),
+                        res_idx: (le_u16(sub, 8) as usize).saturating_sub(1),
                         flags: le_u16(sub, 10),
                         params,
                     });
@@ -893,9 +904,7 @@ pub struct PrintAsset {
 
 impl PrintAsset {
     pub fn load(dir: &Path, puzzle_num: usize) -> Result<Self, String> {
-        let path = dir.join(format!("P{:02}.PRT", puzzle_num));
-        let raw = fs::read(&path).map_err(|e| format!("Failed to read {:?}: {}", path, e))?;
-        let dec = decompress_da(&raw)?;
+        let dec = read_da(&dir.join(format!("P{:02}.PRT", puzzle_num)))?;
         if dec.len() < 8000 {
             return Err(format!("PRT decompressed size too small: {}", dec.len()));
         }
@@ -909,8 +918,7 @@ impl PrintAsset {
 
 /// Load Title (`MJP.TTL`) or Credits (`MJP.CRD`) screens for the selected video mode.
 pub fn load_ilbm_container(path: &Path) -> Result<Vec<IlbmImage>, String> {
-    let raw = fs::read(path).map_err(|e| format!("Failed to read {:?}: {}", path, e))?;
-    let dec = decompress_da(&raw)?;
+    let dec = read_da(path)?;
     let chunks = split_multi_resource(&dec)?;
     let mut images = Vec::new();
     for (idx, ch) in chunks.into_iter().enumerate() {
@@ -967,7 +975,7 @@ impl Default for Preferences {
 
 impl Preferences {
     pub fn load(path: &Path) -> Result<Self, String> {
-        let b = fs::read(path).map_err(|e| format!("Failed to read {:?}: {}", path, e))?;
+        let b = read_file(path)?;
         if b.len() < 28 {
             return Err("MJP.PRE shorter than 28 bytes".to_string());
         }
