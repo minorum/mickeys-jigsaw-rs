@@ -14,7 +14,7 @@ use crate::assets::{FontAsset, Preferences, PuzzleAsset, ToolboxAsset, load_ilbm
 use crate::audio::{AudioEngine, CommonSound};
 use crate::decompress::IlbmImage;
 use crate::graphics::{Framebuffer, SCREEN_H, SCREEN_W, render_scene_view_with_scratch};
-use crate::puzzle::{PuzzleAction, PuzzleSession};
+use crate::puzzle::{PuzzleAction, PuzzlePresentKey, PuzzleSession, hash_str_opt};
 use crate::setup::SetupMenu;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,6 +43,41 @@ enum AppScreen {
     Setup { return_to_playing: bool },
     Browser,
     Playing,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PresentSignature {
+    Title,
+    Credits(usize),
+    Setup {
+        selected_row: usize,
+        video_mode: u16,
+        music_on: u16,
+        sfx_on: u16,
+        timer_on: u16,
+        grid_lines_on: u16,
+        text_msg_on: u16,
+        has_error: bool,
+    },
+    Browser {
+        selected_puzzle: usize,
+        selected_grid_dim: usize,
+        curved_edges: bool,
+        uses_ega: bool,
+        can_resume: bool,
+        caption_hash: Option<u64>,
+        has_error: bool,
+    },
+    Reference {
+        puzzle_num: usize,
+        uses_ega: bool,
+    },
+    Playing {
+        puzzle: PuzzlePresentKey,
+        keyboard_pointer: Option<(i32, i32)>,
+        caption_hash: Option<u64>,
+        has_error: bool,
+    },
 }
 
 struct BrowserPreviewCache {
@@ -508,6 +543,68 @@ impl GameApp {
         }
     }
 
+    fn present_signature(
+        &self,
+        mx: i32,
+        my: i32,
+        show_reference: bool,
+        picture_guide: bool,
+    ) -> Option<PresentSignature> {
+        Some(match self.screen {
+            AppScreen::Title => PresentSignature::Title,
+            AppScreen::Credits { page } => PresentSignature::Credits(page),
+            AppScreen::Setup { .. } => PresentSignature::Setup {
+                selected_row: self.setup_menu.selected_row,
+                video_mode: self.setup_menu.prefs.video_mode,
+                music_on: self.setup_menu.prefs.music_on,
+                sfx_on: self.setup_menu.prefs.sfx_on,
+                timer_on: self.setup_menu.prefs.timer_on,
+                grid_lines_on: self.setup_menu.prefs.grid_lines_on,
+                text_msg_on: self.setup_menu.prefs.text_msg_on,
+                has_error: self.setup_menu.error.is_some(),
+            },
+            AppScreen::Browser => {
+                let caption_hash = hash_str_opt(
+                    (self.prefs.text_msg_on != 0)
+                        .then(|| self.audio.common_caption())
+                        .flatten(),
+                );
+                PresentSignature::Browser {
+                    selected_puzzle: self.selected_puzzle,
+                    selected_grid_dim: self.selected_grid_dim,
+                    curved_edges: self.curved_edges,
+                    uses_ega: self.preview_asset.uses_ega(),
+                    can_resume: self.can_resume_selected(),
+                    caption_hash,
+                    has_error: self.error.is_some(),
+                }
+            }
+            AppScreen::Playing => {
+                let session = self.session.as_ref()?;
+                if show_reference {
+                    PresentSignature::Reference {
+                        puzzle_num: session.puzzle_num,
+                        uses_ega: session.asset.uses_ega(),
+                    }
+                } else {
+                    let caption_hash = hash_str_opt(
+                        (self.prefs.text_msg_on != 0)
+                            .then(|| self.audio.common_caption())
+                            .flatten(),
+                    );
+                    PresentSignature::Playing {
+                        puzzle: session.present_key(mx, my, picture_guide),
+                        keyboard_pointer: session
+                            .keyboard_pointer
+                            .map(|(x, y)| (x.round() as i32, y.round() as i32)),
+                        caption_hash,
+                        has_error: self.error.is_some(),
+                    }
+                }
+            }
+        })
+    }
+
     fn render(&mut self, fb: &mut Framebuffer, mx: i32, my: i32) {
         fb.reset_clip();
         match self.screen {
@@ -877,6 +974,7 @@ async fn main() {
     let reference = Texture2D::from_rgba8(SCREEN_W as u16, SCREEN_H as u16, &rgba_buf);
     reference.set_filter(FilterMode::Nearest);
     let mut cached_ref_key: Option<(usize, bool)> = None;
+    let mut last_present_sig: Option<PresentSignature> = None;
     let mut picture_guide = true;
     let mut mouse_reference = false;
 
@@ -916,25 +1014,29 @@ async fn main() {
         } else {
             app.update(dt, mx, my, left_clicked, right_clicked);
         }
-        if show_reference {
-            app.session.as_ref().unwrap().render_reference(&mut fb);
-        } else {
-            app.render(&mut fb, mx, my);
-        }
+        let sig = app.present_signature(mx, my, show_reference, picture_guide);
+        if sig.is_none() || sig != last_present_sig {
+            if show_reference {
+                app.session.as_ref().unwrap().render_reference(&mut fb);
+            } else {
+                app.render(&mut fb, mx, my);
+            }
 
-        fb.to_rgba8(&mut rgba_buf);
-        if picture_guide
-            && !show_reference
-            && app.screen == AppScreen::Playing
-            && let Some(session) = &mut app.session
-        {
-            let (px, py) = session
-                .keyboard_pointer
-                .map(|(x, y)| (x.round() as i32, y.round() as i32))
-                .unwrap_or((mx, my));
-            session.blend_picture_guide(&mut rgba_buf, px, py);
+            fb.to_rgba8(&mut rgba_buf);
+            if picture_guide
+                && !show_reference
+                && app.screen == AppScreen::Playing
+                && let Some(session) = &mut app.session
+            {
+                let (px, py) = session
+                    .keyboard_pointer
+                    .map(|(x, y)| (x.round() as i32, y.round() as i32))
+                    .unwrap_or((mx, my));
+                session.blend_picture_guide(&mut rgba_buf, px, py);
+            }
+            texture.update_from_bytes(SCREEN_W as u32, SCREEN_H as u32, &rgba_buf);
+            last_present_sig = sig;
         }
-        texture.update_from_bytes(SCREEN_W as u32, SCREEN_H as u32, &rgba_buf);
 
         let viewport = game_viewport(win_w, win_h, app.screen == AppScreen::Playing);
         clear_background(Color::from_hex(0x263640));

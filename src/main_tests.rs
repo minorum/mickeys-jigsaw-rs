@@ -1126,12 +1126,22 @@ fn perf_benchmark() {
     for id in 1..=15 {
         black_box(PuzzleAsset::load(&dir, id, false).unwrap());
     }
-    let load_all = t0.elapsed();
+    let load_all_vga = t0.elapsed();
+
+    let t0_ega = Instant::now();
+    for id in 1..=15 {
+        black_box(PuzzleAsset::load(&dir, id, true).unwrap());
+    }
+    let load_all_ega = t0_ega.elapsed();
 
     let asset = PuzzleAsset::load(&dir, 1, false).unwrap();
     let t1 = Instant::now();
-    let mut session = PuzzleSession::new(1, asset, 8, true, true, true);
+    let mut session = PuzzleSession::new(1, asset.clone(), 8, true, true, true);
     let cut_8x8 = t1.elapsed();
+
+    let t1_preset = Instant::now();
+    let mut preset_session = PuzzleSession::new(1, asset.clone(), 1, true, true, true);
+    let cut_preset = t1_preset.elapsed();
 
     let tbx = ToolboxAsset::load(&dir.join("MJP.TBX"), 0).unwrap();
     let font = FontAsset::load(&dir.join("MJP.NFT")).unwrap();
@@ -1151,6 +1161,20 @@ fn perf_benchmark() {
     }
     let render_warm = t2.elapsed();
 
+    // Dragging a piece
+    session.held_piece = Some(0);
+    let t_drag = Instant::now();
+    for i in 0..iters {
+        let mx = 80 + (i % 160);
+        let my = 40 + (i % 120);
+        session.render(&mut fb, &tbx, &font, mx, my);
+        fb.to_rgba8(&mut rgba);
+        session.blend_picture_guide(&mut rgba, mx, my);
+        black_box(rgba[0]);
+    }
+    let drag_full = t_drag.elapsed();
+    session.held_piece = None;
+
     let t3 = Instant::now();
     for _ in 0..iters {
         fb.to_rgba8(&mut rgba);
@@ -1165,12 +1189,98 @@ fn perf_benchmark() {
     }
     let guide = t4.elapsed();
 
+    // Solved idle & animation/dissolve
+    let mut audio = AudioEngine::new(&dir, false, false);
+    preset_session.auto_solve(&mut audio);
+    let anim_iters = 500;
+    let t_anim = Instant::now();
+    for _ in 0..anim_iters {
+        preset_session.render(&mut fb, &tbx, &font, 160, 100);
+        black_box(&fb.pixels[0]);
+    }
+    let render_anim = t_anim.elapsed();
+
+    if let Some(anim) = preset_session.active_anim.as_mut() {
+        anim.transition_mode = 8;
+        anim.tick_accum = anim.frame_delay_secs * 0.25;
+    }
+    let t_dissolve = Instant::now();
+    for _ in 0..anim_iters {
+        preset_session.render(&mut fb, &tbx, &font, 160, 100);
+        black_box(&fb.pixels[0]);
+    }
+    let render_dissolve = t_dissolve.elapsed();
+
     eprintln!(
-        "load_15_vga={:.2}ms cut_8x8={:.2}ms render_warm={:.2}us/frame to_rgba8={:.2}us/frame guide={:.2}us/frame",
-        load_all.as_secs_f64() * 1000.0,
+        "load_15_vga={:.2}ms load_15_ega={:.2}ms cut_8x8={:.2}ms cut_preset={:.2}ms \
+         render_warm={:.2}us/frame drag_full={:.2}us/frame to_rgba8={:.2}us/frame \
+         guide={:.2}us/frame render_anim={:.2}us/frame render_dissolve={:.2}us/frame",
+        load_all_vga.as_secs_f64() * 1000.0,
+        load_all_ega.as_secs_f64() * 1000.0,
         cut_8x8.as_secs_f64() * 1000.0,
+        cut_preset.as_secs_f64() * 1000.0,
         render_warm.as_secs_f64() * 1e6 / iters as f64,
+        drag_full.as_secs_f64() * 1e6 / iters as f64,
         to_rgba.as_secs_f64() * 1e6 / iters as f64,
         guide.as_secs_f64() * 1e6 / iters as f64,
+        render_anim.as_secs_f64() * 1e6 / anim_iters as f64,
+        render_dissolve.as_secs_f64() * 1e6 / anim_iters as f64,
     );
+}
+
+#[test]
+fn present_signature_skips_idle_board_motion_and_tracks_visual_changes() {
+    let dir = test_game_dir();
+    let asset = PuzzleAsset::load(&dir, 1, false).unwrap();
+    let mut session = PuzzleSession::new(1, asset, 4, true, true, true);
+
+    // Moving the cursor around the board without a held piece does not change the signature
+    let idle_a = session.present_key(120, 80, true);
+    let idle_b = session.present_key(200, 140, true);
+    assert_eq!(idle_a, idle_b);
+
+    // Moving over a tray slot changes the signature (hover highlight)
+    let tray_hover = session.present_key(20, 40, true);
+    assert_ne!(idle_a, tray_hover);
+
+    // Toggling picture guide changes the signature
+    let no_guide = session.present_key(120, 80, false);
+    assert_ne!(idle_a, no_guide);
+
+    // Holding a piece tracks cursor position changes
+    session.held_piece = Some(0);
+    let held_a = session.present_key(120, 80, true);
+    let held_b = session.present_key(124, 80, true);
+    assert_ne!(idle_a, held_a);
+    assert_ne!(held_a, held_b);
+}
+
+#[test]
+fn browser_present_signature_tracks_and_expires_common_captions() {
+    let dir = test_game_dir();
+    let mut app = GameApp::new(dir, true).unwrap();
+    app.screen = AppScreen::Browser;
+    app.prefs.text_msg_on = 1;
+
+    let idle_sig = app.present_signature(120, 80, false, false);
+    assert!(idle_sig.is_some());
+
+    app.audio.play_common(CommonSound::NextPicture);
+    let next_sig = app.present_signature(120, 80, false, false);
+    assert_ne!(idle_sig, next_sig);
+
+    app.audio.play_common(CommonSound::StartPuzzle);
+    let start_sig = app.present_signature(120, 80, false, false);
+    assert_ne!(next_sig, start_sig);
+
+    // Advance enough time for the common caption to expire on an idle Browser screen
+    for _ in 0..20 {
+        app.audio.update(0.5);
+    }
+    assert!(app.audio.common_caption().is_none());
+    let expired_sig = app.present_signature(120, 80, false, false);
+    assert_eq!(expired_sig, idle_sig);
+
+    // Content-aware hashing distinguishes equal-length captions
+    assert_ne!(hash_str_opt(Some("aaaa")), hash_str_opt(Some("bbbb")));
 }

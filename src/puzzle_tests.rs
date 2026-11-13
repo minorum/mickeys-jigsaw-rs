@@ -998,3 +998,106 @@ fn replace_scene_asset_preserves_solved_and_partial_state() {
     assert!(session.solved);
     assert!(!session.toolbox_open);
 }
+
+#[test]
+fn blend_picture_guide_matches_reference_with_placed_held_and_clipped_pieces() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let font = FontAsset::load(&dir.join("MJP.NFT")).unwrap();
+    for ega in [false, true] {
+        let asset = PuzzleAsset::load(dir, 1, ega).unwrap();
+        let toolbox = ToolboxAsset::load(&dir.join("MJP.TBX"), usize::from(ega)).unwrap();
+        let mut session = PuzzleSession::new(1, asset, 3, true, false, false);
+        session.pieces[0].placed = true;
+        session.pieces[4].placed = true;
+        session.held_piece = Some(1);
+
+        let pfx = session.playfield_x();
+        let pfy = session.playfield_y();
+        let cursor_positions = [
+            (160, 100),
+            (pfx - 3, pfy - 3),
+            (pfx + PLAYFIELD_W - 2, pfy + PLAYFIELD_H - 2),
+            (2, 2),
+            (318, 198),
+        ];
+
+        let pal = session.asset.palette;
+        let bg_idx = session.ui_colors.board_bg as usize;
+        let bg_rgba = [pal[bg_idx][0], pal[bg_idx][1], pal[bg_idx][2], 255];
+
+        for &(mx, my) in &cursor_positions {
+            let mut fb = Framebuffer::new();
+            session.render(&mut fb, &toolbox, &font, mx, my);
+
+            let mut actual = vec![0u8; 320 * 200 * 4];
+            fb.to_rgba8(&mut actual);
+            let mut expected = actual.clone();
+
+            session.blend_picture_guide(&mut actual, mx, my);
+
+            // Simple pixel-by-pixel reference implementation
+            for py in 0..PLAYFIELD_H {
+                for px in 0..PLAYFIELD_W {
+                    let sx = pfx + px;
+                    let sy = pfy + py;
+                    if !(0..320).contains(&sx) || !(0..200).contains(&sy) {
+                        continue;
+                    }
+                    let placed_here = session.pieces.iter().any(|piece| {
+                        if !piece.placed {
+                            return false;
+                        }
+                        let dx = px - piece.target_x;
+                        let dy = py - piece.target_y;
+                        if !(0..i32::from(piece.sprite.width)).contains(&dx)
+                            || !(0..i32::from(piece.sprite.sub_h)).contains(&dy)
+                        {
+                            return false;
+                        }
+                        let src = (dy + i32::from(piece.sprite.sub_y)) as usize
+                            * usize::from(piece.sprite.stride)
+                            + (dx + i32::from(piece.sprite.sub_x)) as usize;
+                        piece.sprite.is_opaque(src)
+                    });
+                    if placed_here {
+                        continue;
+                    }
+
+                    let held_here = session.held_piece.is_some_and(|held_idx| {
+                        let piece = &session.pieces[held_idx];
+                        let hx = mx - piece.base_w / 2 + piece.target_x - piece.base_x - pfx;
+                        let hy = my - piece.base_h / 2 + piece.target_y - piece.base_y - pfy;
+                        let dx = px - hx;
+                        let dy = py - hy;
+                        if !(0..i32::from(piece.sprite.width)).contains(&dx)
+                            || !(0..i32::from(piece.sprite.sub_h)).contains(&dy)
+                        {
+                            return false;
+                        }
+                        let src = (dy + i32::from(piece.sprite.sub_y)) as usize
+                            * usize::from(piece.sprite.stride)
+                            + (dx + i32::from(piece.sprite.sub_x)) as usize;
+                        piece.sprite.is_opaque(src)
+                    });
+                    if held_here {
+                        continue;
+                    }
+
+                    let off = ((sy * 320 + sx) * 4) as usize;
+                    if expected[off..off + 4] != bg_rgba {
+                        continue;
+                    }
+                    let pic_c = session.full_picture_fb.get_pixel(2 + px, 2 + py);
+                    let pic_rgb = session.full_picture_fb.palette[pic_c as usize];
+                    for ch in 0..3 {
+                        expected[off + ch] =
+                            ((u16::from(bg_rgba[ch]) * 4 + u16::from(pic_rgb[ch])) / 5) as u8;
+                    }
+                    expected[off + 3] = 255;
+                }
+            }
+
+            assert_eq!(actual, expected, "ega={ega}, cursor=({mx}, {my})");
+        }
+    }
+}
