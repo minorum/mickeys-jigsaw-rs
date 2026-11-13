@@ -22,6 +22,7 @@ pub struct SetupMenu {
     pub prefs: Preferences,
     pub selected_row: usize,
     pub error: Option<String>,
+    revision: u64,
 }
 
 impl SetupMenu {
@@ -30,6 +31,31 @@ impl SetupMenu {
             prefs,
             selected_row: 0,
             error: None,
+            revision: 0,
+        }
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub fn set_prefs(&mut self, prefs: Preferences) {
+        if self.prefs != prefs {
+            self.prefs = prefs;
+            self.revision = self.revision.wrapping_add(1);
+        }
+    }
+
+    pub fn set_video_mode(&mut self, video_mode: u16) {
+        if self.prefs.video_mode != video_mode {
+            self.prefs.video_mode = video_mode;
+            self.revision = self.revision.wrapping_add(1);
+        }
+    }
+
+    pub fn clear_error(&mut self) {
+        if self.error.take().is_some() {
+            self.revision = self.revision.wrapping_add(1);
         }
     }
 
@@ -43,10 +69,12 @@ impl SetupMenu {
         } else {
             self.selected_row = self.num_rows() - 1;
         }
+        self.revision = self.revision.wrapping_add(1);
     }
 
     pub fn move_down(&mut self) {
         self.selected_row = (self.selected_row + 1) % self.num_rows();
+        self.revision = self.revision.wrapping_add(1);
     }
 
     /// Toggles or cycles the currently selected setting; returns `true` if "Done / Return to Game" was activated.
@@ -54,30 +82,39 @@ impl SetupMenu {
         match self.selected_row {
             0 => {
                 self.prefs.video_mode = if self.prefs.video_mode >= 2 { 1 } else { 2 };
+                self.revision = self.revision.wrapping_add(1);
             }
             1 => {
                 self.prefs.music_on = u16::from(self.prefs.music_on == 0);
+                self.revision = self.revision.wrapping_add(1);
             }
             2 => {
                 self.prefs.sfx_on = u16::from(self.prefs.sfx_on == 0);
+                self.revision = self.revision.wrapping_add(1);
             }
             3 => {
                 self.prefs.timer_on = u16::from(self.prefs.timer_on == 0);
+                self.revision = self.revision.wrapping_add(1);
             }
             4 => {
                 self.prefs.grid_lines_on = u16::from(self.prefs.grid_lines_on == 0);
+                self.revision = self.revision.wrapping_add(1);
             }
             5 => {
                 self.prefs.text_msg_on = u16::from(self.prefs.text_msg_on == 0);
+                self.revision = self.revision.wrapping_add(1);
             }
             6 => {
                 // Save to `mjp_config.pre` so original `MJP.PRE` is never modified
                 match self.prefs.save(&game_dir.join("mjp_config.pre")) {
                     Ok(()) => {
-                        self.error = None;
+                        self.clear_error();
                         return true;
                     }
-                    Err(err) => self.error = Some(err),
+                    Err(err) => {
+                        self.error = Some(err);
+                        self.revision = self.revision.wrapping_add(1);
+                    }
                 }
             }
             _ => {}

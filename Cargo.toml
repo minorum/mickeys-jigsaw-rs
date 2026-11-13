@@ -5,6 +5,9 @@ edition = "2024"
 license = "MIT"
 description = "Native Rust recreation of Mickey's Jigsaw Puzzles (1991, DOS)"
 
+[features]
+asset-tests = []
+
 [dependencies]
 macroquad = { version = "0.4", default-features = false }
 rodio = { version = "0.19", default-features = false, features = ["wav"] }

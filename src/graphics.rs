@@ -1126,21 +1126,37 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn vga_sprite_blits_match_original_driver() {
         check_sprite_blits(include_str!("../validation/sprite-blits.tsv"), false);
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn ega_sprite_blits_match_original_driver() {
         check_sprite_blits(include_str!("../validation/ega-sprite-blits.tsv"), true);
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn vga_scene_rasters_match_original_traversal_and_driver() {
         check_scene_rasters(include_str!("../validation/scene-raster-vga.tsv"), false);
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn ega_scene_rasters_match_original_traversal_and_driver() {
         check_scene_rasters(include_str!("../validation/scene-raster-ega.tsv"), true);
@@ -1216,6 +1232,10 @@ mod tests {
         assert_eq!(checked, if use_ega { 2984 } else { 3684 });
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn nonzero_sprite_keys_preserve_rendering_and_hit_testing() {
         for (id, index, key) in [(7, 38, 2), (10, 24, 246), (10, 37, 2)] {
@@ -1261,6 +1281,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn dissolve_orders_match_original_graphics_drivers() {
         for row in include_str!("../validation/dissolve-order.tsv")
@@ -1292,6 +1316,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn scene_view_preserves_native_pixels_and_pattern_phase() {
         let row = include_str!("../validation/scene-viewport.tsv")
@@ -1322,6 +1350,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn scene_background_preserves_both_pattern_colors() {
         for ega in [false, true] {
@@ -1349,6 +1381,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn scene_background_respects_the_viewport() {
         let mut asset = PuzzleAsset::load(Path::new(env!("CARGO_MANIFEST_DIR")), 1, false).unwrap();
@@ -1369,6 +1405,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn ega_rectangle_pattern_matches_original_driver() {
         let mut colors = std::collections::BTreeSet::new();
@@ -1450,6 +1490,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn preset_piece_bounds_match_original_machine_code() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1498,6 +1542,10 @@ mod tests {
         assert_eq!(checked, 349);
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn nested_reflection_bounds_match_original_machine_code() {
         let mut asset = PuzzleAsset::load(Path::new(env!("CARGO_MANIFEST_DIR")), 1, false).unwrap();
@@ -1601,6 +1649,10 @@ mod tests {
         assert_eq!(fb.palette[1], DEFAULT_EGA16_PALETTE[1]);
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn blit_sprite_modes_and_offset_speech_bubble_match() {
         let sprite = Sprite8061 {
@@ -1738,6 +1790,10 @@ mod tests {
         assert_eq!(fb.get_pixel(21, 21), 7);
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn apply_dissolve_step_matches_render_scene_dissolve() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
