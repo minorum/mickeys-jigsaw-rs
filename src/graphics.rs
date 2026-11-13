@@ -698,14 +698,8 @@ where
                 {
                     continue;
                 }
-                let (lx, ly) = reflect_subframe_origin(
-                    puzzle,
-                    child_idx,
-                    dx,
-                    dy,
-                    state.flags,
-                    state.depth,
-                );
+                let (lx, ly) =
+                    reflect_subframe_origin(puzzle, child_idx, dx, dy, state.flags, state.depth);
                 let combined_flags = match policy {
                     FrameTraversalPolicy::Render => combine_frame_flags(state.flags, child_flags),
                     FrameTraversalPolicy::Geometry => (state.flags ^ child_flags) & 3,
