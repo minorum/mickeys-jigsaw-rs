@@ -41,37 +41,25 @@ fn window_conf() -> Conf {
     }
 }
 
-struct DesktopHudCtx<'a> {
+#[allow(clippy::too_many_arguments)]
+fn render_desktop_hud(
+    session: &PuzzleSession,
     win_w: f32,
     win_h: f32,
-    reference: &'a Texture2D,
-    cached_ref_key: &'a mut Option<(usize, bool)>,
-    rgba_buf: &'a mut [u8],
+    reference: &Texture2D,
+    cached_ref_key: &mut Option<(u64, u64)>,
+    rgba_buf: &mut [u8],
     reference_button: Rect,
     reference_hovered: bool,
-    reference_available: bool,
     show_reference: bool,
-}
-
-fn render_desktop_hud(session: &PuzzleSession, ctx: DesktopHudCtx<'_>) {
-    let DesktopHudCtx {
-        win_w,
-        win_h,
-        reference,
-        cached_ref_key,
-        rgba_buf,
-        reference_button,
-        reference_hovered,
-        reference_available,
-        show_reference,
-    } = ctx;
+) {
     let ink = Color::from_hex(0xf5edd8);
     let muted = Color::from_hex(0xb2c4ca);
     let accent = Color::from_hex(0xedbe5e);
     draw_rectangle(0.0, 0.0, win_w, 80.0, Color::from_hex(0x182831));
-    let ref_key = (session.puzzle_num(), session.asset().uses_ega());
+    let ref_key = (session.session_id(), session.asset_rev());
     if *cached_ref_key != Some(ref_key) {
-        session.full_picture_fb().to_rgba8(rgba_buf);
+        session.full_picture_fb.to_rgba8(rgba_buf);
         reference.update_from_bytes(SCREEN_W as u32, SCREEN_H as u32, rgba_buf);
         *cached_ref_key = Some(ref_key);
     }
@@ -103,16 +91,16 @@ fn render_desktop_hud(session: &PuzzleSession, ctx: DesktopHudCtx<'_>) {
         &if compact {
             format!(
                 "{:02}  /  {} of {}",
-                session.puzzle_num(),
+                session.puzzle_num,
                 placed,
-                session.pieces().len()
+                session.pieces.len()
             )
         } else {
             format!(
                 "Picture {:02}   /   {} of {} pieces placed",
-                session.puzzle_num(),
+                session.puzzle_num,
                 placed,
-                session.pieces().len()
+                session.pieces.len()
             )
         },
         112.0,
@@ -120,7 +108,7 @@ fn render_desktop_hud(session: &PuzzleSession, ctx: DesktopHudCtx<'_>) {
         18.0,
         muted,
     );
-    if session.timer_enabled() {
+    if session.timer_enabled {
         let time = session.formatted_time();
         let width = measure_text(&time, None, 24, 1.0).width;
         draw_text(&time, win_w - width - 20.0, 29.0, 24.0, ink);
@@ -132,14 +120,14 @@ fn render_desktop_hud(session: &PuzzleSession, ctx: DesktopHudCtx<'_>) {
         reference_button.h,
         if show_reference {
             accent
-        } else if reference_hovered && reference_available {
+        } else if reference_hovered && !session.solved {
             Color::from_hex(0x496675)
         } else {
             Color::from_hex(0x364c57)
         },
     );
     draw_text(
-        if session.is_solved() {
+        if session.solved {
             "Picture complete!"
         } else if show_reference {
             "Release to keep playing"
@@ -160,9 +148,9 @@ fn render_desktop_hud(session: &PuzzleSession, ctx: DesktopHudCtx<'_>) {
         "Tab: picture   H: guide   F1: hint   Esc: menu"
     } else if show_reference {
         "Picture reference  /  progress and timer paused"
-    } else if session.is_solved() {
+    } else if session.solved {
         "Click the picture to play   /   Esc: choose another puzzle"
-    } else if session.held_piece().is_some() {
+    } else if session.held_piece.is_some() {
         "Place on the board   /   Click the tray to return the piece"
     } else {
         "Pick and place   /   H: picture guide   G: edges   F1: hint   Esc: menu"
@@ -231,7 +219,7 @@ async fn main() {
     texture.set_filter(FilterMode::Nearest);
     let reference = Texture2D::from_rgba8(SCREEN_W as u16, SCREEN_H as u16, &renderer.rgba_buf);
     reference.set_filter(FilterMode::Nearest);
-    let mut cached_ref_key: Option<(usize, bool)> = None;
+    let mut cached_ref_key: Option<(u64, u64)> = None;
     let mut picture_guide = true;
     let mut mouse_reference = false;
 
@@ -255,7 +243,7 @@ async fn main() {
         let reference_button = Rect::new(win_w - 210.0, 42.0, 194.0, 30.0);
         let reference_hovered =
             win_w >= 480.0 && win_h >= 360.0 && reference_button.contains(vec2(raw_mx, raw_my));
-        let reference_available = playing && app.session.as_ref().is_some_and(|s| !s.is_solved());
+        let reference_available = playing && app.session.as_ref().is_some_and(|s| !s.solved);
         mouse_reference = reference_available
             && is_mouse_button_down(MouseButton::Left)
             && (mouse_reference
@@ -291,21 +279,18 @@ async fn main() {
             if let Some(session) = &app.session {
                 render_desktop_hud(
                     session,
-                    DesktopHudCtx {
-                        win_w,
-                        win_h,
-                        reference: &reference,
-                        cached_ref_key: &mut cached_ref_key,
-                        rgba_buf: &mut renderer.rgba_buf,
-                        reference_button,
-                        reference_hovered,
-                        reference_available,
-                        show_reference,
-                    },
+                    win_w,
+                    win_h,
+                    &reference,
+                    &mut cached_ref_key,
+                    &mut renderer.rgba_buf,
+                    reference_button,
+                    reference_hovered,
+                    show_reference,
                 );
             }
         } else if app.screen == AppScreen::Playing
-            && let Some(session) = app.session.as_ref().filter(|s| s.timer_enabled())
+            && let Some(session) = app.session.as_ref().filter(|s| s.timer_enabled)
         {
             let time = session.formatted_time();
             draw_text(&time, win_w - 100.0, 18.0, 18.0, WHITE);

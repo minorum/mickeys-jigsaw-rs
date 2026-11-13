@@ -131,6 +131,15 @@ pub fn horiz_edge_curve(dim: usize, variant: usize) -> (i32, &'static [(i16, i16
     }
 }
 
+#[inline]
+fn edge_curve(is_vert: bool, dim: usize, variant: usize) -> (i32, &'static [(i16, i16)]) {
+    if is_vert {
+        vert_edge_curve(dim, variant)
+    } else {
+        horiz_edge_curve(dim, variant)
+    }
+}
+
 /// Cut jigsaw piece ready for rendering in the tray, while dragging, or when placed on the board.
 #[derive(Clone)]
 pub struct JigsawPiece {
@@ -313,92 +322,12 @@ impl PuzzleSession {
         self.session_id
     }
 
-    pub fn puzzle_num(&self) -> usize {
-        self.puzzle_num
-    }
-
-    pub fn asset(&self) -> &PuzzleAsset {
-        &self.asset
-    }
-
-    pub fn grid_dim(&self) -> usize {
-        self.grid_dim
-    }
-
-    pub fn curved_edges(&self) -> bool {
-        self.curved_edges
-    }
-
-    pub fn toolbox_open(&self) -> bool {
-        self.toolbox_open
-    }
-
-    pub fn grid_lines(&self) -> bool {
-        self.grid_lines
-    }
-
-    pub fn timer_enabled(&self) -> bool {
-        self.timer_enabled
-    }
-
-    pub fn text_enabled(&self) -> bool {
-        self.text_enabled
-    }
-
-    pub fn elapsed_secs(&self) -> f64 {
-        self.elapsed_secs
-    }
-
-    pub fn pieces(&self) -> &[JigsawPiece] {
-        &self.pieces
-    }
-
     pub fn placed_count(&self) -> usize {
         self.pieces.iter().filter(|p| p.placed).count()
     }
 
-    pub fn tray_order(&self) -> &[usize] {
-        &self.tray_order
-    }
-
-    pub fn tray_scroll(&self) -> usize {
-        self.tray_scroll
-    }
-
-    pub fn held_piece(&self) -> Option<usize> {
-        self.held_piece
-    }
-
-    pub fn keyboard_pointer(&self) -> Option<(f32, f32)> {
-        self.keyboard_pointer
-    }
-
-    pub fn hint_piece(&self) -> Option<(usize, f32)> {
-        self.hint_piece
-    }
-
-    pub fn is_solved(&self) -> bool {
-        self.solved
-    }
-
-    pub fn active_anim(&self) -> Option<&AnimationPlayer> {
-        self.active_anim.as_ref()
-    }
-
     pub fn status_message(&self) -> Option<&str> {
         self.status_message.as_ref().map(|(s, _)| s.as_str())
-    }
-
-    pub fn full_picture_fb(&self) -> &Framebuffer {
-        &self.full_picture_fb
-    }
-
-    pub fn grid_polylines_v(&self) -> &[Vec<(i32, i32)>] {
-        &self.grid_polylines_v
-    }
-
-    pub fn grid_polylines_h(&self) -> &[Vec<(i32, i32)>] {
-        &self.grid_polylines_h
     }
 
     pub fn asset_rev(&self) -> u64 {
@@ -411,6 +340,12 @@ impl PuzzleSession {
 
     pub fn visual_rev(&self) -> u64 {
         self.visual_rev
+    }
+
+    pub fn active_pointer(&self, mouse_x: i32, mouse_y: i32) -> (i32, i32) {
+        self.keyboard_pointer
+            .map(|(x, y)| (x.round() as i32, y.round() as i32))
+            .unwrap_or((mouse_x, mouse_y))
     }
 
     pub fn set_preferences(&mut self, grid_lines: bool, timer_enabled: bool, text_enabled: bool) {
@@ -525,25 +460,22 @@ impl PuzzleSession {
                 .wrapping_add((dim as u32) * 12345),
         );
 
-        // Shared vertical borders: `v_edges[r][c]` for `r in 0..dim`, `c in 1..dim` -> `(variant 0..3, dir -1 or +1)`
+        let mut next_edge = || {
+            let code = rng.next() & 7;
+            (code & 3, if code < 4 { 1 } else { -1 })
+        };
+
+        // Shared vertical & horizontal borders: `(variant 0..3, dir -1 or +1)`
         let mut v_edges = vec![vec![(0usize, 1i32); dim + 1]; dim];
         for row in &mut v_edges {
             for edge in row.iter_mut().take(dim).skip(1) {
-                let code = rng.next() & 7;
-                let variant = code & 3;
-                let dir = if code < 4 { 1 } else { -1 };
-                *edge = (variant, dir);
+                *edge = next_edge();
             }
         }
-
-        // Shared horizontal borders: `h_edges[r][c]` for `r in 1..dim`, `c in 0..dim` -> `(variant 0..3, dir -1 or +1)`
         let mut h_edges = vec![vec![(0usize, 1i32); dim]; dim + 1];
         for row in h_edges.iter_mut().take(dim).skip(1) {
             for edge in row {
-                let code = rng.next() & 7;
-                let variant = code & 3;
-                let dir = if code < 4 { 1 } else { -1 };
-                *edge = (variant, dir);
+                *edge = next_edge();
             }
         }
 
@@ -616,12 +548,7 @@ impl PuzzleSession {
                         borders.iter().enumerate()
                     {
                         if active && dir == out_dir {
-                            let (ext, _) = if is_vert {
-                                vert_edge_curve(dim, var)
-                            } else {
-                                horiz_edge_curve(dim, var)
-                            };
-                            pads[i] = ext;
+                            pads[i] = edge_curve(is_vert, dim, var).0;
                         }
                     }
                 }
@@ -641,11 +568,7 @@ impl PuzzleSession {
                         if !active {
                             continue;
                         }
-                        let (_, pts) = if is_vert {
-                            vert_edge_curve(dim, var)
-                        } else {
-                            horiz_edge_curve(dim, var)
-                        };
+                        let (_, pts) = edge_curve(is_vert, dim, var);
                         poly.clear();
                         poly.extend(pts.iter().map(|&(dx, dy)| {
                             if is_vert {
@@ -664,28 +587,23 @@ impl PuzzleSession {
                 let mut opacity = vec![false; px_buf.len()];
                 for dy in 0..th {
                     let py = ty + dy;
+                    if !(0..crate::graphics::SCREEN_H).contains(&py) {
+                        continue;
+                    }
+                    let mask_row = (py as usize) * 320;
+                    let src_row = ((src_oy + py) as usize) * 320;
+                    let dst_row = (dy * tw) as usize;
                     for dx in 0..tw {
                         let px = tx + dx;
-                        if mask_fb.get_pixel(px, py) != 0 {
-                            let col = self.full_picture_fb.get_pixel(src_ox + px, src_oy + py);
-                            px_buf[(dy * tw + dx) as usize] = col;
-                            opacity[(dy * tw + dx) as usize] = true;
+                        if (0..320).contains(&px) && mask_fb.pixels[mask_row + px as usize] != 0 {
+                            px_buf[dst_row + dx as usize] =
+                                self.full_picture_fb.pixels[src_row + (src_ox + px) as usize];
+                            opacity[dst_row + dx as usize] = true;
                         }
                     }
                 }
 
-                let sprite = Sprite8061 {
-                    stride: tw as u16,
-                    height: th as u16,
-                    transparent_color: trans,
-                    bpp: 8,
-                    sub_x: 0,
-                    sub_y: 0,
-                    width: tw as u16,
-                    sub_h: th as u16,
-                    pixels: px_buf,
-                    opacity: Some(opacity),
-                };
+                let sprite = Sprite8061::from_8bpp(tw, th, trans, px_buf, opacity);
 
                 pieces.push(JigsawPiece {
                     index: idx,
@@ -704,14 +622,7 @@ impl PuzzleSession {
         }
 
         // Shuffle pieces into the tray (`FUN_1e59_0b0a`)
-        let tray_order = rng.shuffled_indices(pieces.len());
-
-        self.pieces = pieces;
-        self.tray_order = tray_order;
-        self.tray_scroll = 0;
-        self.held_piece = None;
-        self.drag_origin = None;
-        self.solved = false;
+        self.finish_cutting(pieces, &mut rng);
     }
 
     fn cut_preset_pieces(&mut self) {
@@ -778,10 +689,10 @@ impl PuzzleSession {
                 let mut colors = Vec::with_capacity(cap);
                 let mut opacity = Vec::with_capacity(cap);
                 for py in top..top + height {
-                    for px in left..left + width {
-                        colors.push(pixels.get_pixel(px, py));
-                        opacity.push(mask.get_pixel(px, py) != 0);
-                    }
+                    let row = (py as usize) * 320 + left as usize;
+                    let w = width as usize;
+                    colors.extend_from_slice(&pixels.pixels[row..row + w]);
+                    opacity.extend(mask.pixels[row..row + w].iter().map(|&p| p != 0));
                 }
                 pieces.push(JigsawPiece {
                     index: pieces.len(),
@@ -793,18 +704,7 @@ impl PuzzleSession {
                     base_y: top - 2,
                     base_w: width,
                     base_h: height,
-                    sprite: Sprite8061 {
-                        stride: width as u16,
-                        height: height as u16,
-                        transparent_color: 0,
-                        bpp: 8,
-                        sub_x: 0,
-                        sub_y: 0,
-                        width: width as u16,
-                        sub_h: height as u16,
-                        pixels: colors,
-                        opacity: Some(opacity),
-                    },
+                    sprite: Sprite8061::from_8bpp(width, height, 0, colors, opacity),
                     placed: false,
                 });
             }
@@ -814,15 +714,18 @@ impl PuzzleSession {
                 .wrapping_mul(1103515245)
                 .wrapping_add(12345),
         );
-        let order = rng.shuffled_indices(pieces.len());
+        self.finish_cutting(pieces, &mut rng);
+        self.grid_polylines_v.clear();
+        self.grid_polylines_h.clear();
+    }
+
+    fn finish_cutting(&mut self, pieces: Vec<JigsawPiece>, rng: &mut LcgRng) {
+        self.tray_order = rng.shuffled_indices(pieces.len());
         self.pieces = pieces;
-        self.tray_order = order;
         self.tray_scroll = 0;
         self.held_piece = None;
         self.drag_origin = None;
         self.solved = false;
-        self.grid_polylines_v.clear();
-        self.grid_polylines_h.clear();
     }
 
     /// Number of pieces visible at once in the left-hand tray (`1..=5` depending on piece size).
@@ -947,13 +850,14 @@ impl PuzzleSession {
     }
 
     fn trigger_frame_side_effects(&mut self, frame_idx: usize, audio: &mut AudioEngine) {
+        let Some(mut anim) = self.active_anim.take() else {
+            return;
+        };
         let mut delay_ticks = None;
         let mut sound_to_play = None;
-        if let Some(anim) = &mut self.active_anim {
-            anim.wait_for_audio = false;
-            anim.frame_delay_secs = anim.default_delay_secs;
-            anim.transition_mode = 0;
-        }
+        anim.wait_for_audio = false;
+        anim.frame_delay_secs = anim.default_delay_secs;
+        anim.transition_mode = 0;
 
         if let Some(SceneRecord::Frame { commands, .. }) = self.asset.records.get(frame_idx) {
             for cmd in commands {
@@ -963,17 +867,13 @@ impl PuzzleSession {
                     }
                     FrameCommand::Sound {
                         snd_idx: Some(sidx),
-                    } => {
-                        sound_to_play = Some(sidx);
-                    }
+                    } => sound_to_play = Some(sidx),
                     _ => {}
                 }
             }
         }
 
-        if let Some((ticks, transition)) = delay_ticks
-            && let Some(ref mut anim) = self.active_anim
-        {
+        if let Some((ticks, transition)) = delay_ticks {
             anim.transition_mode = transition;
             anim.wait_for_audio = ticks == 998;
             if ticks != 0 && ticks != 998 {
@@ -983,15 +883,14 @@ impl PuzzleSession {
 
         if let Some(sidx) = sound_to_play {
             audio.stop_all();
-            if let Some(anim) = &mut self.active_anim {
-                anim.bubble = None;
-                anim.looping_sound = None;
-            }
+            anim.bubble = None;
+            anim.looping_sound = None;
             if let Some(entry) = self.asset.sounds.get_mut(sidx) {
                 let mut voice_chosen = false;
                 let looping = entry.selection_mode & 0x80 != 0;
-                let music = entry.sounds.first();
-                let has_music = music
+                let has_music = entry
+                    .sounds
+                    .first()
                     .is_some_and(|desc| audio.iss_songs.keys().any(|(stem, _)| stem == &desc.stem));
                 if (audio.sfx_enabled || !audio.music_enabled || !has_music)
                     && entry.sounds.len() > 1
@@ -1001,11 +900,10 @@ impl PuzzleSession {
                     if audio.nnv_banks.contains_key(&desc.stem) {
                         voice_chosen = true;
                         audio.play_nnv(&desc.stem, desc.phrase_idx as usize);
-                        if looping && let Some(anim) = &mut self.active_anim {
+                        if looping {
                             anim.looping_sound = Some((sidx, voice + 1));
                         }
-                        if let Some(anim) = self.active_anim.as_mut().filter(|_| self.text_enabled)
-                        {
+                        if self.text_enabled {
                             anim.bubble = Some((sidx, voice));
                         }
                     }
@@ -1016,20 +914,17 @@ impl PuzzleSession {
                     .filter(|desc| !voice_chosen && !desc.stem.is_empty())
                 {
                     audio.play_iss(&desc.stem, desc.phrase_idx as usize);
-                    if looping && let Some(anim) = &mut self.active_anim {
+                    if looping {
                         anim.looping_sound = Some((sidx, 0));
                     }
                 }
             }
         }
-        if let Some(anim) = &mut self.active_anim
-            && anim.wait_for_audio
-            && anim.bubble.is_some()
-            && self.text_enabled
-            && !audio.is_playing()
+        if anim.wait_for_audio && anim.bubble.is_some() && self.text_enabled && !audio.is_playing()
         {
             anim.frame_delay_secs = 20.0 * DOS_TICK_SECS;
         }
+        self.active_anim = Some(anim);
     }
 
     #[inline]
@@ -1400,10 +1295,7 @@ impl PuzzleSession {
         } else if self.solved {
             PointerVisualState::Solved
         } else {
-            let (px, py) = self
-                .keyboard_pointer
-                .map(|(x, y)| (x.round() as i32, y.round() as i32))
-                .unwrap_or((mouse_x, mouse_y));
+            let (px, py) = self.active_pointer(mouse_x, mouse_y);
             PointerVisualState::Board {
                 hovered_slot: self.hovered_tray_slot(px, py),
                 held_piece_pos: self.held_piece.map(|p| (p, px, py)),
@@ -1419,50 +1311,6 @@ impl PuzzleSession {
         }
     }
 
-    /// Dispatches a typed gameplay command.
-    pub fn apply_command(
-        &mut self,
-        cmd: PuzzleCommand,
-        audio: &mut AudioEngine,
-    ) -> Option<PuzzleAction> {
-        match cmd {
-            PuzzleCommand::PointerPress { x, y } => self.handle_pointer_press(x, y, audio),
-            PuzzleCommand::PointerRelease { x, y } => {
-                self.handle_pointer_release(x, y, audio);
-                None
-            }
-            PuzzleCommand::KeyboardActivate => self.handle_keyboard_activate(audio),
-            PuzzleCommand::ToggleToolbox => {
-                self.toggle_toolbox();
-                None
-            }
-            PuzzleCommand::ScrollTray(delta) => {
-                self.scroll_tray(delta);
-                None
-            }
-            PuzzleCommand::TriggerHint => {
-                self.trigger_hint();
-                None
-            }
-            PuzzleCommand::AutoSolve => {
-                self.auto_solve(audio);
-                None
-            }
-            PuzzleCommand::ToggleGridLines => {
-                self.toggle_grid_lines();
-                None
-            }
-            PuzzleCommand::CancelDrag => {
-                self.cancel_pointer_drag();
-                None
-            }
-            PuzzleCommand::ClearKeyboardPointer => {
-                self.clear_keyboard_pointer();
-                None
-            }
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn set_piece_placed_for_test(&mut self, idx: usize, placed: bool) {
         if self.pieces[idx].placed != placed {
@@ -1470,20 +1318,6 @@ impl PuzzleSession {
             self.bump_board();
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PuzzleCommand {
-    PointerPress { x: i32, y: i32 },
-    PointerRelease { x: i32, y: i32 },
-    KeyboardActivate,
-    ToggleToolbox,
-    ScrollTray(i32),
-    TriggerHint,
-    AutoSolve,
-    ToggleGridLines,
-    CancelDrag,
-    ClearKeyboardPointer,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

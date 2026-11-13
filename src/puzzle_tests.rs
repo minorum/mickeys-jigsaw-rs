@@ -1138,7 +1138,7 @@ fn blend_picture_guide_matches_reference_with_placed_held_and_clipped_pieces() {
         ];
 
         let pal = session.asset.palette;
-        let bg_idx = session.full_picture_fb().color_index([204, 204, 187]) as usize;
+        let bg_idx = session.full_picture_fb.color_index([204, 204, 187]) as usize;
         let bg_rgba = [pal[bg_idx][0], pal[bg_idx][1], pal[bg_idx][2], 255];
 
         for &(mx, my) in &cursor_positions {
@@ -1327,42 +1327,39 @@ fn pure_gameplay_pick_place_hint_and_complete_without_assets() {
     let asset = synthetic_puzzle_asset(1, false);
     let mut session = PuzzleSession::new(1, asset, 2, true, false, true);
 
-    assert_eq!(session.pieces().len(), 4);
-    assert_eq!(session.tray_order().len(), 4);
-    assert!(!session.is_solved());
+    assert_eq!(session.pieces.len(), 4);
+    assert_eq!(session.tray_order.len(), 4);
+    assert!(!session.solved);
 
     // Trigger hint and verify blink phase flips over time
-    session.apply_command(PuzzleCommand::TriggerHint, &mut audio);
+    session.trigger_hint();
     let hint_key_0 = session.present_key(120, 80, false);
     session.update(0.125, &mut audio);
     let hint_key_1 = session.present_key(120, 80, false);
     assert_ne!(hint_key_0, hint_key_1);
 
-    // Pick and place all 4 pieces via typed commands
+    // Pick and place all 4 pieces
     for _ in 0..4 {
-        assert_eq!(
-            session.apply_command(PuzzleCommand::PointerPress { x: 20, y: 40 }, &mut audio),
-            None
-        );
-        let held = session.held_piece().expect("piece picked from tray");
-        let piece = &session.pieces()[held];
+        assert_eq!(session.handle_pointer_press(20, 40, &mut audio), None);
+        let held = session.held_piece.expect("piece picked from tray");
+        let piece = &session.pieces[held];
         let tx = session.playfield_x() + piece.base_x + piece.base_w / 2;
         let ty = session.playfield_y() + piece.base_y + piece.base_h / 2;
-        session.apply_command(PuzzleCommand::PointerPress { x: tx, y: ty }, &mut audio);
-        assert!(session.held_piece().is_none());
+        session.handle_pointer_press(tx, ty, &mut audio);
+        assert!(session.held_piece.is_none());
     }
 
-    assert!(session.is_solved());
-    assert!(!session.toolbox_open());
-    assert!(session.active_anim().is_some());
+    assert!(session.solved);
+    assert!(!session.toolbox_open);
+    assert!(session.active_anim.is_some());
 
     // Clicking during completion animation skips it
-    session.apply_command(PuzzleCommand::PointerPress { x: 160, y: 100 }, &mut audio);
-    assert!(session.active_anim().is_none());
+    session.handle_pointer_press(160, 100, &mut audio);
+    assert!(session.active_anim.is_none());
 
     // Clicking top-left menu hotspot returns OpenMenu
     assert_eq!(
-        session.apply_command(PuzzleCommand::PointerPress { x: 5, y: 5 }, &mut audio),
+        session.handle_pointer_press(5, 5, &mut audio),
         Some(PuzzleAction::OpenMenu)
     );
 }
@@ -1381,7 +1378,7 @@ fn present_key_tracks_idle_hover_guide_timer_and_dissolve_without_assets() {
 
     // Timer ticks do not invalidate the DOS framebuffer key
     session.update(1.5, &mut audio);
-    assert!(session.elapsed_secs() >= 1.5);
+    assert!(session.elapsed_secs >= 1.5);
     assert_eq!(session.present_key(120, 80, true), k0);
 
     // Tray hover invalidates (and keyboard pointer tray hover also invalidates)
@@ -1400,13 +1397,13 @@ fn present_key_tracks_idle_hover_guide_timer_and_dissolve_without_assets() {
     assert_ne!(session.present_key(120, 80, false), k0);
 
     // Held piece tracks movement
-    session.apply_command(PuzzleCommand::PointerPress { x: 20, y: 40 }, &mut audio);
+    session.handle_pointer_press(20, 40, &mut audio);
     let k_held_a = session.present_key(100, 100, true);
     let k_held_b = session.present_key(104, 100, true);
     assert_ne!(k_held_a, k_held_b);
 
     // Auto-solve starts dissolve animation and dissolve steps advance key
-    session.apply_command(PuzzleCommand::AutoSolve, &mut audio);
+    session.auto_solve(&mut audio);
     let k_anim_0 = session.present_key(0, 0, true);
     session.update(0.05, &mut audio);
     let k_anim_1 = session.present_key(0, 0, true);

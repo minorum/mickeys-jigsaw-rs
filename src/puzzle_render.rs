@@ -10,7 +10,7 @@ use crate::puzzle::{
     dissolve_progress,
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 struct UiColors {
     white: u8,
     black: u8,
@@ -38,14 +38,7 @@ impl UiColors {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct BoardCacheKey {
-    session_id: u64,
-    asset_rev: u64,
-    board_rev: u64,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct PlacedMaskKey {
+struct BoardStateKey {
     session_id: u64,
     asset_rev: u64,
     board_rev: u64,
@@ -67,19 +60,58 @@ struct DissolveCacheKey {
     cur_frame: usize,
 }
 
-struct RenderCache {
+fn build_guide_playfield(full_picture_fb: &Framebuffer, board_bg: u8) -> Vec<[u8; 4]> {
+    let bg = full_picture_fb.palette[board_bg as usize];
+    let mut lut = [[0u8; 4]; 256];
+    for (dst, src) in lut.iter_mut().zip(full_picture_fb.palette.iter()) {
+        *dst = [
+            ((u16::from(bg[0]) * 4 + u16::from(src[0])) / 5) as u8,
+            ((u16::from(bg[1]) * 4 + u16::from(src[1])) / 5) as u8,
+            ((u16::from(bg[2]) * 4 + u16::from(src[2])) / 5) as u8,
+            255,
+        ];
+    }
+    let mut out = Vec::with_capacity((PLAYFIELD_W * PLAYFIELD_H) as usize);
+    for y in 0..PLAYFIELD_H {
+        let row = ((2 + y) as usize) * 320 + 2;
+        for x in 0..PLAYFIELD_W as usize {
+            out.push(lut[full_picture_fb.pixels[row + x] as usize]);
+        }
+    }
+    out
+}
+
+/// Cached software renderer for [`PuzzleSession`].
+///
+/// All derived palette colors, picture-guide LUTs, board layers, and animation/dissolve
+/// framebuffers are keyed off `PuzzleSession`'s unique `session_id` and monotonic
+/// `asset_rev` / `board_rev` counters, preventing stale caches across session
+/// replacements or video-mode switches.
+pub struct PuzzleRenderer {
+    synced_asset: Option<(u64, u64)>,
+    ui_colors: UiColors,
+    guide_playfield: Vec<[u8; 4]>,
     scratch_fb: Box<Framebuffer>,
     dissolve_prev_fb: Box<Framebuffer>,
     dissolve_next_fb: Box<Framebuffer>,
     dissolve_key: Option<DissolveCacheKey>,
     anim_fb: Option<(AnimFrameCacheKey, Box<Framebuffer>)>,
-    placed_mask: Option<(PlacedMaskKey, Vec<bool>)>,
-    board_fb: Option<(BoardCacheKey, Box<Framebuffer>)>,
+    placed_mask: Option<(BoardStateKey, Vec<bool>)>,
+    board_fb: Option<(BoardStateKey, Box<Framebuffer>)>,
 }
 
-impl RenderCache {
-    fn new() -> Self {
+impl Default for PuzzleRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PuzzleRenderer {
+    pub fn new() -> Self {
         Self {
+            synced_asset: None,
+            ui_colors: UiColors::default(),
+            guide_playfield: Vec::new(),
             scratch_fb: Box::new(Framebuffer::new()),
             dissolve_prev_fb: Box::new(Framebuffer::new()),
             dissolve_next_fb: Box::new(Framebuffer::new()),
@@ -90,7 +122,16 @@ impl RenderCache {
         }
     }
 
-    fn ensure_placed_mask(&mut self, key: PlacedMaskKey, pieces: &[JigsawPiece]) -> &[bool] {
+    /// Clears all cached derived palette, guide, board, and animation buffers.
+    pub fn reset_caches(&mut self) {
+        self.synced_asset = None;
+        self.dissolve_key = None;
+        self.anim_fb = None;
+        self.placed_mask = None;
+        self.board_fb = None;
+    }
+
+    fn ensure_placed_mask(&mut self, key: BoardStateKey, pieces: &[JigsawPiece]) -> &[bool] {
         let rebuild = self
             .placed_mask
             .as_ref()
@@ -133,7 +174,7 @@ impl RenderCache {
 
     fn ensure_board_fb(
         &mut self,
-        key: BoardCacheKey,
+        key: BoardStateKey,
         session: &PuzzleSession,
         tbx: &ToolboxAsset,
         colors: UiColors,
@@ -148,7 +189,7 @@ impl RenderCache {
                 .take()
                 .map(|(_, buf)| buf)
                 .unwrap_or_else(|| Box::new(Framebuffer::new()));
-            let asset = session.asset();
+            let asset = &session.asset;
             let pfx = session.playfield_x();
             let pfy = session.playfield_y();
             board.palette = asset.palette;
@@ -160,20 +201,13 @@ impl RenderCache {
             draw_playfield_border(&mut board, tbx, pfx - 2, PLAYFIELD_W + 2);
 
             // Draw Grid Lines if enabled (`FUN_1b43_0448`)
-            if session.grid_lines() {
+            if session.grid_lines {
                 board.set_clip(pfx, pfy, PLAYFIELD_W, PLAYFIELD_H);
-                for line in session.grid_polylines_v() {
-                    for w in line.windows(2) {
-                        board.draw_line(
-                            pfx + w[0].0,
-                            pfy + w[0].1,
-                            pfx + w[1].0,
-                            pfy + w[1].1,
-                            colors.gray,
-                        );
-                    }
-                }
-                for line in session.grid_polylines_h() {
+                for line in session
+                    .grid_polylines_v
+                    .iter()
+                    .chain(&session.grid_polylines_h)
+                {
                     for w in line.windows(2) {
                         board.draw_line(
                             pfx + w[0].0,
@@ -189,7 +223,7 @@ impl RenderCache {
 
             // Draw all placed pieces onto the playfield
             board.set_clip(pfx, pfy, PLAYFIELD_W, PLAYFIELD_H);
-            if session.grid_dim() == 1 {
+            if session.grid_dim == 1 {
                 if let Some(SceneRecord::Frame {
                     bg_frame_idx,
                     commands,
@@ -200,7 +234,7 @@ impl RenderCache {
                     native.clear(0);
                     native.set_clip(2, 2, PLAYFIELD_W, PLAYFIELD_H);
                     render_scene_frame(native, asset, *bg_frame_idx, 0, 0, 0, true, 0, 0);
-                    for (piece, command) in session.pieces().iter().zip(
+                    for (piece, command) in session.pieces.iter().zip(
                         commands
                             .iter()
                             .filter(|c| matches!(c, FrameCommand::SubFrame { .. })),
@@ -233,7 +267,7 @@ impl RenderCache {
                     copy_scene_interior(&mut board, native, pfx);
                 }
             } else {
-                for piece in session.pieces() {
+                for piece in &session.pieces {
                     if piece.placed {
                         board.blit_sprite(
                             &piece.sprite,
@@ -249,82 +283,13 @@ impl RenderCache {
         }
         &self.board_fb.as_ref().unwrap().1
     }
-}
-
-fn build_guide_playfield(full_picture_fb: &Framebuffer, board_bg: u8) -> Vec<[u8; 4]> {
-    let bg = full_picture_fb.palette[board_bg as usize];
-    let mut lut = [[0u8; 4]; 256];
-    for (dst, src) in lut.iter_mut().zip(full_picture_fb.palette.iter()) {
-        *dst = [
-            ((u16::from(bg[0]) * 4 + u16::from(src[0])) / 5) as u8,
-            ((u16::from(bg[1]) * 4 + u16::from(src[1])) / 5) as u8,
-            ((u16::from(bg[2]) * 4 + u16::from(src[2])) / 5) as u8,
-            255,
-        ];
-    }
-    let mut out = Vec::with_capacity((PLAYFIELD_W * PLAYFIELD_H) as usize);
-    for y in 0..PLAYFIELD_H {
-        let row = ((2 + y) as usize) * 320 + 2;
-        for x in 0..PLAYFIELD_W as usize {
-            out.push(lut[full_picture_fb.pixels[row + x] as usize]);
-        }
-    }
-    out
-}
-
-/// Cached software renderer for [`PuzzleSession`].
-///
-/// All derived palette colors, picture-guide LUTs, board layers, and animation/dissolve
-/// framebuffers are keyed off `PuzzleSession`'s unique `session_id` and monotonic
-/// `asset_rev` / `board_rev` counters, preventing stale caches across session
-/// replacements or video-mode switches.
-pub struct PuzzleRenderer {
-    synced_asset: Option<(u64, u64)>,
-    ui_colors: UiColors,
-    guide_playfield: Vec<[u8; 4]>,
-    cache: Box<RenderCache>,
-}
-
-impl Default for PuzzleRenderer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl PuzzleRenderer {
-    pub fn new() -> Self {
-        Self {
-            synced_asset: None,
-            ui_colors: UiColors {
-                white: 15,
-                black: 0,
-                gray: 8,
-                card: 8,
-                hover: 7,
-                yellow: 14,
-                red: 12,
-                board_bg: 7,
-            },
-            guide_playfield: Vec::new(),
-            cache: Box::new(RenderCache::new()),
-        }
-    }
-
-    /// Clears all cached derived palette, guide, board, and animation buffers.
-    pub fn reset_caches(&mut self) {
-        self.synced_asset = None;
-        self.cache.dissolve_key = None;
-        self.cache.anim_fb = None;
-        self.cache.placed_mask = None;
-        self.cache.board_fb = None;
-    }
 
     fn sync_asset(&mut self, session: &PuzzleSession) {
         let key = (session.session_id(), session.asset_rev());
         if self.synced_asset == Some(key) {
             return;
         }
-        let full_picture_fb = session.full_picture_fb();
+        let full_picture_fb = &session.full_picture_fb;
         self.ui_colors = UiColors::from_framebuffer(full_picture_fb);
         self.guide_playfield = build_guide_playfield(full_picture_fb, self.ui_colors.board_bg);
         self.synced_asset = Some(key);
@@ -333,10 +298,10 @@ impl PuzzleRenderer {
     /// Renders the static full-picture reference view (`Tab` / Reference button).
     pub fn render_reference(&mut self, session: &PuzzleSession, fb: &mut Framebuffer) {
         self.sync_asset(session);
-        fb.palette = session.asset().palette;
+        fb.palette = session.asset.palette;
         fb.reset_clip();
         fb.clear(self.ui_colors.black);
-        copy_scene_interior(fb, session.full_picture_fb(), SCENE_OFFSET_X + 2);
+        copy_scene_interior(fb, &session.full_picture_fb, SCENE_OFFSET_X + 2);
     }
 
     /// Blends the translucent picture guide onto unplaced board background pixels in `rgba`.
@@ -348,33 +313,31 @@ impl PuzzleRenderer {
         pointer_y: i32,
     ) {
         assert_eq!(rgba.len(), 320 * 200 * 4);
-        if session.is_solved() || session.grid_dim() == 1 {
+        if session.solved || session.grid_dim == 1 {
             return;
         }
         self.sync_asset(session);
+        let mask_key = BoardStateKey {
+            session_id: session.session_id(),
+            asset_rev: session.asset_rev(),
+            board_rev: session.board_rev(),
+        };
         let pfx = session.playfield_x();
         let pfy = session.playfield_y();
-        let placed_cov = self.cache.ensure_placed_mask(
-            PlacedMaskKey {
-                session_id: session.session_id(),
-                asset_rev: session.asset_rev(),
-                board_rev: session.board_rev(),
-            },
-            session.pieces(),
-        );
-        let held_bounds = session.held_piece().map(|index| {
-            let piece = &session.pieces()[index];
+        let bg_rgb = session.asset.palette[self.ui_colors.board_bg as usize];
+        let bg_rgba = [bg_rgb[0], bg_rgb[1], bg_rgb[2], 255];
+        let (rgba_chunks, _) = rgba.as_chunks_mut::<4>();
+        let pw = PLAYFIELD_W as usize;
+        let held_bounds = session.held_piece.map(|index| {
+            let piece = &session.pieces[index];
             (
                 piece,
                 pointer_x - piece.base_w / 2 + piece.target_x - piece.base_x - pfx,
                 pointer_y - piece.base_h / 2 + piece.target_y - piece.base_y - pfy,
             )
         });
-
-        let bg_rgb = session.asset().palette[self.ui_colors.board_bg as usize];
-        let bg_rgba = [bg_rgb[0], bg_rgb[1], bg_rgb[2], 255];
-        let (rgba_chunks, _) = rgba.as_chunks_mut::<4>();
-        let pw = PLAYFIELD_W as usize;
+        let _ = self.ensure_placed_mask(mask_key, &session.pieces);
+        let placed_cov = &self.placed_mask.as_ref().unwrap().1;
 
         for y in 0..PLAYFIELD_H {
             let cov_row = (y as usize) * pw;
@@ -385,47 +348,28 @@ impl PuzzleRenderer {
 
             let held_span = held_bounds.and_then(|(piece, hx, hy)| {
                 let dy = y - hy;
-                if (0..piece.sprite.sub_h as i32).contains(&dy) {
-                    let hw = piece.sprite.width as i32;
-                    let x0 = hx.clamp(0, PLAYFIELD_W) as usize;
-                    let x1 = (hx + hw).clamp(0, PLAYFIELD_W) as usize;
-                    if x0 < x1 {
-                        let row_off = (piece.sprite.sub_y as usize + dy as usize)
-                            * piece.sprite.stride as usize
-                            + piece.sprite.sub_x as usize;
-                        Some((piece, hx, row_off, x0, x1))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
+                if !(0..piece.sprite.sub_h as i32).contains(&dy) {
+                    return None;
                 }
+                let x0 = hx.clamp(0, PLAYFIELD_W) as usize;
+                let x1 = (hx + piece.sprite.width as i32).clamp(0, PLAYFIELD_W) as usize;
+                (x0 < x1).then(|| {
+                    let row_off = (piece.sprite.sub_y as usize + dy as usize)
+                        * piece.sprite.stride as usize
+                        + piece.sprite.sub_x as usize;
+                    (piece, hx, row_off, x0, x1)
+                })
             });
 
-            if let Some((piece, hx, row_off, x0, x1)) = held_span {
-                for x in 0..x0 {
-                    if !cov_slice[x] && dst_row[x] == bg_rgba {
-                        dst_row[x] = guide_row[x];
-                    }
-                }
-                for x in x0..x1 {
-                    if !cov_slice[x]
-                        && dst_row[x] == bg_rgba
-                        && !piece.sprite.is_opaque(row_off + (x as i32 - hx) as usize)
-                    {
-                        dst_row[x] = guide_row[x];
-                    }
-                }
-                for x in x1..pw {
-                    if !cov_slice[x] && dst_row[x] == bg_rgba {
-                        dst_row[x] = guide_row[x];
-                    }
-                }
-            } else {
-                for x in 0..pw {
-                    if !cov_slice[x] && dst_row[x] == bg_rgba {
-                        dst_row[x] = guide_row[x];
-                    }
+            for x in 0..pw {
+                if !cov_slice[x]
+                    && dst_row[x] == bg_rgba
+                    && held_span.is_none_or(|(piece, hx, row_off, x0, x1)| {
+                        !(x0..x1).contains(&x)
+                            || !piece.sprite.is_opaque(row_off + (x as i32 - hx) as usize)
+                    })
+                {
+                    dst_row[x] = guide_row[x];
                 }
             }
         }
@@ -442,21 +386,21 @@ impl PuzzleRenderer {
         pointer_y: i32,
     ) {
         self.sync_asset(session);
-        let asset = session.asset();
+        let asset = &session.asset;
         fb.reset_clip();
         fb.palette = asset.palette;
         let colors = self.ui_colors;
 
         // If an animation sequence is currently playing (`FILM` / `F_*`), render that frame
-        if let Some(anim) = session.active_anim() {
+        if let Some(anim) = &session.active_anim {
             self.render_animation(session, anim, asset, fb, tbx, font);
             return;
         }
 
         // If puzzle is solved and idle, show the static completed scene (`c7c4[3]`)
-        if session.is_solved() {
+        if session.solved {
             fb.clear(colors.black);
-            copy_scene_interior(fb, session.full_picture_fb(), SCENE_OFFSET_X + 2);
+            copy_scene_interior(fb, &session.full_picture_fb, SCENE_OFFSET_X + 2);
             draw_playfield_border(fb, tbx, SCENE_OFFSET_X, PLAYFIELD_W + 2);
             // Draw subtle menu tab icon in top-left corner (`tbx.sprites[49]` or outline)
             if let Some(icon) = tbx.sprites.get(49) {
@@ -470,17 +414,17 @@ impl PuzzleRenderer {
 
         let pfx = session.playfield_x();
         let pfy = session.playfield_y();
-        let board_key = BoardCacheKey {
+        let board_key = BoardStateKey {
             session_id: session.session_id(),
             asset_rev: session.asset_rev(),
             board_rev: session.board_rev(),
         };
-        let board = self.cache.ensure_board_fb(board_key, session, tbx, colors);
+        let board = self.ensure_board_fb(board_key, session, tbx, colors);
         fb.pixels.copy_from_slice(&board.pixels);
 
         // Draw F1 hint highlight if active
-        if let Some((hidx, rem)) = session.hint_piece()
-            && let Some(piece) = session.pieces().get(hidx)
+        if let Some((hidx, rem)) = session.hint_piece
+            && let Some(piece) = session.pieces.get(hidx)
         {
             fb.set_clip(pfx, pfy, PLAYFIELD_W, PLAYFIELD_H);
             let blink = ((rem * 8.0) as i32) & 1 == 0;
@@ -494,7 +438,7 @@ impl PuzzleRenderer {
             fb.reset_clip();
         }
 
-        if session.toolbox_open() {
+        if session.toolbox_open {
             self.render_toolbox(session, fb, font, pointer_x, pointer_y);
         }
 
@@ -504,8 +448,8 @@ impl PuzzleRenderer {
         }
 
         // Draw currently held piece centered on the cursor
-        if let Some(pidx) = session.held_piece() {
-            let piece = &session.pieces()[pidx];
+        if let Some(pidx) = session.held_piece {
+            let piece = &session.pieces[pidx];
             let px = pointer_x - piece.base_w / 2 + piece.target_x - piece.base_x;
             let py = pointer_y - piece.base_h / 2 + piece.target_y - piece.base_y;
             fb.blit_sprite(&piece.sprite, px, py, 0);
@@ -521,8 +465,7 @@ impl PuzzleRenderer {
         tbx: &ToolboxAsset,
         font: &FontAsset,
     ) {
-        let cache = &mut *self.cache;
-        let bubble = anim.bubble.filter(|_| session.text_enabled());
+        let bubble = anim.bubble.filter(|_| session.text_enabled);
         if anim.transition_mode == 8 {
             let progress = dissolve_progress(anim);
             let key = DissolveCacheKey {
@@ -531,35 +474,30 @@ impl PuzzleRenderer {
                 previous_frame: anim.previous_frame,
                 cur_frame: anim.cur_frame,
             };
-            if cache.dissolve_key != Some(key) {
+            if self.dissolve_key != Some(key) {
                 render_scene_view_with_scratch(
-                    &mut cache.dissolve_prev_fb,
-                    &mut cache.scratch_fb,
+                    &mut self.dissolve_prev_fb,
+                    &mut self.scratch_fb,
                     asset,
                     anim.previous_frame,
                 );
                 render_scene_view_with_scratch(
-                    &mut cache.dissolve_next_fb,
-                    &mut cache.scratch_fb,
+                    &mut self.dissolve_next_fb,
+                    &mut self.scratch_fb,
                     asset,
                     anim.cur_frame,
                 );
-                cache.dissolve_key = Some(key);
+                self.dissolve_key = Some(key);
             }
             apply_dissolve_step(
                 fb,
-                &cache.dissolve_prev_fb,
-                &cache.dissolve_next_fb,
+                &self.dissolve_prev_fb,
+                &self.dissolve_next_fb,
                 asset.uses_ega(),
                 progress,
             );
             draw_playfield_border(fb, tbx, SCENE_OFFSET_X, PLAYFIELD_W + 2);
-            if let Some((sound, voice)) = bubble
-                && let Some(Some(bubble_data)) = asset.sounds[sound].bubbles.get(voice)
-            {
-                let (fill, ink) = if asset.uses_ega() { (15, 1) } else { (248, 16) };
-                fb.draw_speech_bubble_offset(bubble_data, font, SCENE_OFFSET_X, 0, fill, ink);
-            }
+            draw_anim_bubble(fb, asset, font, bubble);
         } else {
             let key = AnimFrameCacheKey {
                 session_id: session.session_id(),
@@ -567,12 +505,12 @@ impl PuzzleRenderer {
                 cur_frame: anim.cur_frame,
                 bubble,
             };
-            let rebuild = cache
+            let rebuild = self
                 .anim_fb
                 .as_ref()
                 .is_none_or(|(cached_key, _)| *cached_key != key);
             if rebuild {
-                let mut cached = cache
+                let mut cached = self
                     .anim_fb
                     .take()
                     .map(|(_, buf)| buf)
@@ -581,28 +519,16 @@ impl PuzzleRenderer {
                 cached.palette = asset.palette;
                 render_scene_view_with_scratch(
                     &mut cached,
-                    &mut cache.scratch_fb,
+                    &mut self.scratch_fb,
                     asset,
                     anim.cur_frame,
                 );
                 draw_playfield_border(&mut cached, tbx, SCENE_OFFSET_X, PLAYFIELD_W + 2);
-                if let Some((sound, voice)) = key.bubble
-                    && let Some(Some(bubble_data)) = asset.sounds[sound].bubbles.get(voice)
-                {
-                    let (fill, ink) = if asset.uses_ega() { (15, 1) } else { (248, 16) };
-                    cached.draw_speech_bubble_offset(
-                        bubble_data,
-                        font,
-                        SCENE_OFFSET_X,
-                        0,
-                        fill,
-                        ink,
-                    );
-                }
-                cache.anim_fb = Some((key, cached));
+                draw_anim_bubble(&mut cached, asset, font, key.bubble);
+                self.anim_fb = Some((key, cached));
             }
             fb.pixels
-                .copy_from_slice(&cache.anim_fb.as_ref().unwrap().1.pixels);
+                .copy_from_slice(&self.anim_fb.as_ref().unwrap().1.pixels);
         }
     }
 
@@ -623,7 +549,7 @@ impl PuzzleRenderer {
 
         // Up arrow (`y = 18..29`)
         fb.fill_rect(2, 18, TOOLBOX_W - 6, 11, colors.card);
-        let up_color = if session.tray_scroll() > 0 {
+        let up_color = if session.tray_scroll > 0 {
             colors.white
         } else {
             colors.black
@@ -635,7 +561,7 @@ impl PuzzleRenderer {
         // Down arrow (`y = 187..198`)
         fb.fill_rect(2, 187, TOOLBOX_W - 6, 11, colors.card);
         let down_color =
-            if session.tray_scroll() + session.visible_tray_slots() < session.tray_order().len() {
+            if session.tray_scroll + session.visible_tray_slots() < session.tray_order.len() {
                 colors.white
             } else {
                 colors.black
@@ -650,9 +576,9 @@ impl PuzzleRenderer {
         let hovered_slot = session.hovered_tray_slot(pointer_x, pointer_y);
         fb.set_clip(2, 30, TOOLBOX_W - 6, 156);
         for slot in 0..vis {
-            let tray_idx = session.tray_scroll() + slot;
-            if let Some(&pidx) = session.tray_order().get(tray_idx) {
-                let piece = &session.pieces()[pidx];
+            let tray_idx = session.tray_scroll + slot;
+            if let Some(&pidx) = session.tray_order.get(tray_idx) {
+                let piece = &session.pieces[pidx];
                 let slot_y = 30 + slot as i32 * slot_h;
                 let hovered = hovered_slot == Some(slot);
                 fb.fill_rect(
@@ -666,6 +592,20 @@ impl PuzzleRenderer {
             }
         }
         fb.reset_clip();
+    }
+}
+
+fn draw_anim_bubble(
+    fb: &mut Framebuffer,
+    asset: &PuzzleAsset,
+    font: &FontAsset,
+    bubble: Option<(usize, usize)>,
+) {
+    if let Some((sound, voice)) = bubble
+        && let Some(Some(bubble_data)) = asset.sounds[sound].bubbles.get(voice)
+    {
+        let (fill, ink) = if asset.uses_ega() { (15, 1) } else { (248, 16) };
+        fb.draw_speech_bubble_offset(bubble_data, font, SCENE_OFFSET_X, 0, fill, ink);
     }
 }
 

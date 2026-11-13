@@ -1608,3 +1608,47 @@ fn viewport_resizing_preserves_aspect_ratio_across_desktop_and_compact_sizes() {
         assert!((vp.w / vp.h - 1.6).abs() < 0.001);
     }
 }
+
+#[test]
+fn reference_signature_invalidates_across_replaced_sessions_and_assets_without_assets() {
+    let mut app = synthetic_app();
+    let mut renderer = AppRenderer::new();
+
+    app.session = Some(PuzzleSession::new(
+        1,
+        app.preview_asset.clone(),
+        2,
+        true,
+        false,
+        true,
+    ));
+    app.set_screen(AppScreen::Playing);
+    let sig1 = app.present_signature(100, 100, true, false);
+    assert!(renderer.render_if_needed(&app, 100, 100, true, false));
+    assert!(!renderer.render_if_needed(&app, 120, 120, true, false));
+
+    // Replacing the session with the same puzzle_num and video mode must invalidate Reference.
+    app.session = Some(PuzzleSession::new(
+        1,
+        app.preview_asset.clone(),
+        3,
+        false,
+        false,
+        true,
+    ));
+    let sig2 = app.present_signature(100, 100, true, false);
+    assert_ne!(sig2, sig1);
+    assert!(renderer.render_if_needed(&app, 100, 100, true, false));
+
+    // Replacing the scene asset on the same session must also invalidate Reference.
+    let mut alt_asset = app.preview_asset.clone();
+    alt_asset.palette[1] = [200, 100, 50];
+    app.session.as_mut().unwrap().replace_scene_asset(alt_asset);
+    let sig3 = app.present_signature(100, 100, true, false);
+    assert_ne!(sig3, sig2);
+    assert!(renderer.render_if_needed(&app, 100, 100, true, false));
+
+    let mut fresh = AppRenderer::new();
+    assert!(fresh.render_if_needed(&app, 100, 100, true, false));
+    assert_eq!(renderer.rgba_buf, fresh.rgba_buf);
+}

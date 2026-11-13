@@ -7,9 +7,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
 
-use rodio::{OutputStream, OutputStreamHandle, Sink, Source};
+use rodio::buffer::SamplesBuffer;
+use rodio::{OutputStream, OutputStreamHandle, Sink};
 
 use crate::decompress::split_multi_resource;
 
@@ -500,64 +500,6 @@ pub fn synthesize_iss_song(song: &[u8]) -> Vec<i16> {
 }
 
 /// Zero-copy mono PCM source backed by a shared or static slice.
-struct SampleSlice<T> {
-    samples: T,
-    pos: usize,
-    sample_rate: u32,
-}
-
-impl<T: AsRef<[i16]>> SampleSlice<T> {
-    fn new(sample_rate: u32, samples: T) -> Self {
-        Self {
-            samples,
-            pos: 0,
-            sample_rate,
-        }
-    }
-}
-
-impl<T: AsRef<[i16]>> Iterator for SampleSlice<T> {
-    type Item = i16;
-
-    #[inline]
-    fn next(&mut self) -> Option<i16> {
-        let slice = self.samples.as_ref();
-        if self.pos < slice.len() {
-            let sample = slice[self.pos];
-            self.pos += 1;
-            Some(sample)
-        } else {
-            None
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let rem = self.samples.as_ref().len().saturating_sub(self.pos);
-        (rem, Some(rem))
-    }
-}
-
-impl<T: AsRef<[i16]>> Source for SampleSlice<T> {
-    fn current_frame_len(&self) -> Option<usize> {
-        None
-    }
-
-    fn channels(&self) -> u16 {
-        1
-    }
-
-    fn sample_rate(&self) -> u32 {
-        self.sample_rate
-    }
-
-    fn total_duration(&self) -> Option<Duration> {
-        let len = self.samples.as_ref().len() as u64;
-        Some(Duration::from_nanos(
-            len * 1_000_000_000 / u64::from(self.sample_rate),
-        ))
-    }
-}
-
 /// Complete audio manager holding decoded `.ESS`, `.NNV`, and `.ISS` banks and an optional `rodio` output stream.
 pub struct AudioEngine {
     pub nnv_banks: HashMap<String, Vec<u8>>,
@@ -567,8 +509,7 @@ pub struct AudioEngine {
     _stream: Option<OutputStream>,
     stream_handle: Option<OutputStreamHandle>,
     sfx_sinks: Vec<Sink>,
-    common_caption: Option<(CommonSound, f32)>,
-    common_caption_rev: Option<u64>,
+    common_caption: Option<(CommonSound, f32, u64)>,
     next_caption_rev: u64,
     music_sink: Option<Sink>,
     pub music_enabled: bool,
@@ -599,21 +540,13 @@ impl AudioEngine {
             nnv_banks.insert("BUBGUM".to_string(), bub);
         }
 
-        // PROG.ESS
-        if let Ok(prog_ess) = fs::read(game_dir.join("PROG.ESS"))
-            && let Ok(chunks) = split_multi_resource(&prog_ess)
-        {
-            for (i, ch) in chunks.iter().enumerate() {
-                nnv_banks.insert(format!("PROG_{}", i), ch.to_vec());
-            }
-        }
-
-        // DATA.ESS
-        if let Ok(data_ess) = fs::read(game_dir.join("DATA.ESS"))
-            && let Ok(chunks) = split_multi_resource(&data_ess)
-        {
-            for (i, ch) in chunks.iter().enumerate() {
-                nnv_banks.insert(format!("DATA_{}", i), ch.to_vec());
+        for stem in ["PROG", "DATA"] {
+            if let Ok(raw) = fs::read(game_dir.join(format!("{stem}.ESS")))
+                && let Ok(chunks) = split_multi_resource(&raw)
+            {
+                for (i, ch) in chunks.iter().enumerate() {
+                    nnv_banks.insert(format!("{stem}_{i}"), ch.to_vec());
+                }
             }
         }
 
@@ -638,7 +571,6 @@ impl AudioEngine {
             stream_handle: None,
             sfx_sinks: Vec::new(),
             common_caption: None,
-            common_caption_rev: None,
             next_caption_rev: 0,
             music_sink: None,
             music_enabled,
@@ -666,7 +598,7 @@ impl AudioEngine {
             return;
         }
         let samples = self.decoded_nnv_samples(stem, phrase_idx);
-        self.play_effect(samples, NNV_SAMPLE_RATE);
+        self.play_effect(&samples, NNV_SAMPLE_RATE);
     }
 
     pub fn play_common(&mut self, event: CommonSound) {
@@ -678,31 +610,27 @@ impl AudioEngine {
         let duration = (samples.len() as f32 / NNV_SAMPLE_RATE as f32)
             .max(event.caption().len() as f32 / 25.0)
             .max(2.0);
-        self.common_caption = Some((event, duration));
         self.next_caption_rev = self.next_caption_rev.wrapping_add(1);
-        self.common_caption_rev = Some(self.next_caption_rev);
+        self.common_caption = Some((event, duration, self.next_caption_rev));
         if self.sfx_enabled {
-            self.play_effect(samples, NNV_SAMPLE_RATE);
+            self.play_effect(&samples, NNV_SAMPLE_RATE);
         }
     }
 
     pub fn common_caption(&self) -> Option<&'static str> {
-        self.common_caption
-            .as_ref()
-            .map(|(event, _)| event.caption())
+        self.common_caption.map(|(event, _, _)| event.caption())
     }
 
     /// Returns a revision token for the currently displayed common caption, or `None` when idle.
     pub fn caption_key(&self) -> Option<u64> {
-        self.common_caption_rev
+        self.common_caption.map(|(_, _, rev)| rev)
     }
 
     pub fn update(&mut self, dt: f32) {
-        if let Some((_, remaining)) = self.common_caption.as_mut() {
+        if let Some((_, remaining, _)) = self.common_caption.as_mut() {
             *remaining -= dt.max(0.0);
             if *remaining <= 0.0 {
                 self.common_caption = None;
-                self.common_caption_rev = None;
             }
         }
     }
@@ -713,14 +641,14 @@ impl AudioEngine {
         }
     }
 
-    fn play_effect<T: AsRef<[i16]> + Send + 'static>(&mut self, samples: T, rate: u32) {
-        if samples.as_ref().is_empty() {
+    fn play_effect(&mut self, samples: &[i16], rate: u32) {
+        if samples.is_empty() {
             return;
         }
         if let Some(ref handle) = self.stream_handle
             && let Ok(sink) = Sink::try_new(handle)
         {
-            sink.append(SampleSlice::new(rate, samples));
+            sink.append(SamplesBuffer::new(1, rate, samples));
             self.sfx_sinks.retain(|s| !s.empty());
             self.sfx_sinks.push(sink);
         }
@@ -751,14 +679,13 @@ impl AudioEngine {
         if let Some(ref handle) = self.stream_handle
             && let Ok(sink) = Sink::try_new(handle)
         {
-            sink.append(SampleSlice::new(AUDIO_SAMPLE_RATE, samples));
+            sink.append(SamplesBuffer::new(1, AUDIO_SAMPLE_RATE, samples.as_ref()));
             self.music_sink = Some(sink);
         }
     }
 
     pub fn stop_all(&mut self) {
         self.common_caption = None;
-        self.common_caption_rev = None;
         self.sfx_sinks.clear();
         if let Some(m) = self.music_sink.take() {
             m.stop();

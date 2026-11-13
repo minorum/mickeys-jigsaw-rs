@@ -9,7 +9,7 @@ use crate::assets::{FontAsset, Preferences, PuzzleAsset, ToolboxAsset, load_ilbm
 use crate::audio::{AudioEngine, CommonSound};
 use crate::decompress::IlbmImage;
 use crate::graphics::{Framebuffer, SCREEN_H, SCREEN_W, render_scene_view_with_scratch};
-use crate::puzzle::{PuzzleAction, PuzzleCommand, PuzzlePresentKey, PuzzleSession};
+use crate::puzzle::{PuzzleAction, PuzzlePresentKey, PuzzleSession};
 use crate::puzzle_render::PuzzleRenderer;
 use crate::setup::SetupMenu;
 
@@ -54,8 +54,8 @@ pub enum PresentSignature {
         caption_key: Option<u64>,
     },
     Reference {
-        puzzle_num: usize,
-        uses_ega: bool,
+        session_id: u64,
+        asset_rev: u64,
     },
     Playing {
         app_rev: u64,
@@ -315,7 +315,7 @@ impl GameApp {
                         .session
                         .as_ref()
                         .map(|session| {
-                            PuzzleAsset::load(&self.game_dir, session.puzzle_num(), next_ega)
+                            PuzzleAsset::load(&self.game_dir, session.puzzle_num, next_ega)
                         })
                         .transpose()?;
                     Ok((preview, active))
@@ -351,10 +351,10 @@ impl GameApp {
 
     pub fn can_resume_selected(&self) -> bool {
         self.session.as_ref().is_some_and(|session| {
-            !session.is_solved()
-                && session.puzzle_num() == self.selected_puzzle
-                && session.grid_dim() == self.selected_grid_dim
-                && (session.grid_dim() == 1 || session.curved_edges() == self.curved_edges)
+            !session.solved
+                && session.puzzle_num == self.selected_puzzle
+                && session.grid_dim == self.selected_grid_dim
+                && (session.grid_dim == 1 || session.curved_edges == self.curved_edges)
                 && self.session_use_ega == (self.prefs.video_mode >= 2)
         })
     }
@@ -408,10 +408,8 @@ impl GameApp {
             } else {
                 15
             }
-        } else if self.selected_puzzle < 15 {
-            self.selected_puzzle + 1
         } else {
-            1
+            (self.selected_puzzle % 15) + 1
         };
         self.reload_preview();
         self.audio.play_common(if delta < 0 {
@@ -423,11 +421,7 @@ impl GameApp {
 
     pub fn step_grid_dim(&mut self, delta: i32) {
         self.selected_grid_dim = if delta > 0 {
-            if self.selected_grid_dim < 8 {
-                self.selected_grid_dim + 1
-            } else {
-                1
-            }
+            (self.selected_grid_dim % 8) + 1
         } else if self.selected_grid_dim > 1 {
             self.selected_grid_dim - 1
         } else {
@@ -489,16 +483,20 @@ impl GameApp {
                 }
             }
             AppScreen::Credits { page } => {
-                if input.left_pressed || input.space || input.enter || self.screen_timer > 5.0 {
-                    if page + 1 < self.credit_images.len() {
-                        self.set_screen(AppScreen::Credits { page: page + 1 });
-                        self.screen_timer = 0.0;
-                    } else {
-                        self.set_screen(AppScreen::Browser);
-                        self.screen_timer = 0.0;
-                    }
-                } else if input.escape {
+                if input.escape {
                     self.set_screen(AppScreen::Browser);
+                    self.screen_timer = 0.0;
+                } else if input.left_pressed
+                    || input.space
+                    || input.enter
+                    || self.screen_timer > 5.0
+                {
+                    let next = if page + 1 < self.credit_images.len() {
+                        AppScreen::Credits { page: page + 1 }
+                    } else {
+                        AppScreen::Browser
+                    };
+                    self.set_screen(next);
                     self.screen_timer = 0.0;
                 }
             }
@@ -507,23 +505,24 @@ impl GameApp {
                     self.setup_menu.move_up();
                 } else if input.down {
                     self.setup_menu.move_down();
-                } else if input.left {
-                    self.setup_menu.activate_or_cycle(-1, &self.game_dir);
-                    self.sync_prefs_from_setup();
-                } else if input.right || input.enter || input.space {
-                    if self.setup_menu.activate_or_cycle(1, &self.game_dir) {
-                        self.exit_setup(return_to_playing);
-                    } else {
-                        self.sync_prefs_from_setup();
-                    }
                 } else if input.escape {
                     self.exit_setup(return_to_playing);
-                } else if input.left_pressed {
-                    if self.setup_menu.handle_click(
-                        input.pointer_x,
-                        input.pointer_y,
-                        &self.game_dir,
-                    ) {
+                } else {
+                    let done = if input.left {
+                        self.setup_menu.activate_or_cycle(-1, &self.game_dir);
+                        false
+                    } else if input.right || input.enter || input.space {
+                        self.setup_menu.activate_or_cycle(1, &self.game_dir)
+                    } else if input.left_pressed {
+                        self.setup_menu.handle_click(
+                            input.pointer_x,
+                            input.pointer_y,
+                            &self.game_dir,
+                        )
+                    } else {
+                        return;
+                    };
+                    if done {
                         self.exit_setup(return_to_playing);
                     } else {
                         self.sync_prefs_from_setup();
@@ -556,13 +555,12 @@ impl GameApp {
             }
             AppScreen::Playing => {
                 let mut open_menu = input.escape;
-                let mut prefs_changed = false;
 
                 if let Some(ref mut sess) = self.session {
                     sess.update(input.dt, &mut self.audio);
 
                     if input.right_pressed {
-                        sess.apply_command(PuzzleCommand::ClearKeyboardPointer, &mut self.audio);
+                        sess.clear_keyboard_pointer();
                     }
                     if !input.left_pressed && !input.right_pressed {
                         if input.move_x != 0 || input.move_y != 0 {
@@ -573,43 +571,40 @@ impl GameApp {
                             );
                         }
                         if input.enter
-                            && sess.apply_command(PuzzleCommand::KeyboardActivate, &mut self.audio)
+                            && sess.handle_keyboard_activate(&mut self.audio)
                                 == Some(PuzzleAction::OpenMenu)
                         {
                             open_menu = true;
                         }
                     }
 
-                    if (input.right_pressed || input.space) && !sess.is_solved() {
-                        sess.apply_command(PuzzleCommand::ToggleToolbox, &mut self.audio);
+                    if (input.right_pressed || input.space) && !sess.solved {
+                        sess.toggle_toolbox();
                     }
                     if input.f1 {
-                        sess.apply_command(PuzzleCommand::TriggerHint, &mut self.audio);
+                        sess.trigger_hint();
                     }
                     if input.f2 {
-                        sess.apply_command(PuzzleCommand::AutoSolve, &mut self.audio);
+                        sess.auto_solve(&mut self.audio);
                     }
                     if input.f3 || input.key_g {
-                        let grid_lines = sess.toggle_grid_lines();
-                        self.prefs.grid_lines_on = u16::from(grid_lines);
-                        prefs_changed = true;
+                        self.prefs.grid_lines_on = u16::from(sess.toggle_grid_lines());
+                        self.app_rev = self.app_rev.wrapping_add(1);
                     }
                     if input.f5 || input.key_p {
                         sess.export_printable_picture(&self.game_dir);
                     }
                     if input.up || input.wheel_delta > 0 {
-                        sess.apply_command(PuzzleCommand::ScrollTray(-1), &mut self.audio);
+                        sess.scroll_tray(-1);
                     }
                     if input.down || input.wheel_delta < 0 {
-                        sess.apply_command(PuzzleCommand::ScrollTray(1), &mut self.audio);
+                        sess.scroll_tray(1);
                     }
 
                     if input.left_pressed
-                        && sess.apply_command(
-                            PuzzleCommand::PointerPress {
-                                x: input.pointer_x,
-                                y: input.pointer_y,
-                            },
+                        && sess.handle_pointer_press(
+                            input.pointer_x,
+                            input.pointer_y,
                             &mut self.audio,
                         ) == Some(PuzzleAction::OpenMenu)
                     {
@@ -617,18 +612,12 @@ impl GameApp {
                     }
 
                     if input.left_released {
-                        sess.apply_command(
-                            PuzzleCommand::PointerRelease {
-                                x: input.pointer_x,
-                                y: input.pointer_y,
-                            },
+                        sess.handle_pointer_release(
+                            input.pointer_x,
+                            input.pointer_y,
                             &mut self.audio,
                         );
                     }
-                }
-
-                if prefs_changed {
-                    self.bump_rev();
                 }
 
                 if open_menu {
@@ -698,8 +687,8 @@ impl GameApp {
                 let session = self.session.as_ref()?;
                 if show_reference {
                     PresentSignature::Reference {
-                        puzzle_num: session.puzzle_num(),
-                        uses_ega: session.asset().uses_ega(),
+                        session_id: session.session_id(),
+                        asset_rev: session.asset_rev(),
                     }
                 } else {
                     PresentSignature::Playing {
@@ -767,10 +756,7 @@ impl AppRenderer {
             && app.screen == AppScreen::Playing
             && let Some(session) = &app.session
         {
-            let (px, py) = session
-                .keyboard_pointer()
-                .map(|(x, y)| (x.round() as i32, y.round() as i32))
-                .unwrap_or((mx, my));
+            let (px, py) = session.active_pointer(mx, my);
             self.puzzle_renderer
                 .blend_picture_guide(session, &mut self.rgba_buf, px, py);
         }
@@ -895,31 +881,27 @@ impl AppRenderer {
             }
             AppScreen::Playing => {
                 if let Some(ref sess) = app.session {
-                    let toolbox = if sess.asset().uses_ega() {
+                    let toolbox = if sess.asset.uses_ega() {
                         &app.tbx_ega
                     } else {
                         &app.tbx
                     };
-                    let (px, py) = sess
-                        .keyboard_pointer()
-                        .map(|(x, y)| (x.round() as i32, y.round() as i32))
-                        .unwrap_or((mx, my));
+                    let (px, py) = sess.active_pointer(mx, my);
                     puzzle_renderer.render(sess, fb, toolbox, &app.font, px, py);
                 }
             }
         }
-        let has_caption = app.prefs.text_msg_on != 0
-            && matches!(app.screen, AppScreen::Browser | AppScreen::Playing)
-            && app.audio.common_caption().is_some();
-        let has_pointer = app.screen == AppScreen::Playing
-            && app
-                .session
-                .as_ref()
-                .is_some_and(|session| session.keyboard_pointer().is_some());
-        if has_caption || has_pointer || app.error.is_some() {
+        let caption = (app.prefs.text_msg_on != 0
+            && matches!(app.screen, AppScreen::Browser | AppScreen::Playing))
+        .then(|| app.audio.common_caption())
+        .flatten();
+        let kbd_pointer = (app.screen == AppScreen::Playing)
+            .then(|| app.session.as_ref().and_then(|s| s.keyboard_pointer))
+            .flatten();
+        if caption.is_some() || kbd_pointer.is_some() || app.error.is_some() {
             let black = fb.color_index([0; 3]);
             let white = fb.color_index([255; 3]);
-            if has_caption && let Some(caption) = app.audio.common_caption() {
+            if let Some(caption) = caption {
                 let line_count = caption.split('\r').count() as i32;
                 let height = line_count * app.font.height as i32 + 8;
                 let y = 164 - height;
@@ -936,12 +918,7 @@ impl AppRenderer {
                     );
                 }
             }
-            if has_pointer
-                && let Some((x, y)) = app
-                    .session
-                    .as_ref()
-                    .and_then(|session| session.keyboard_pointer())
-            {
+            if let Some((x, y)) = kbd_pointer {
                 let (x, y) = (x.round() as i32, y.round() as i32);
                 fb.draw_rect_outline(x - 3, y - 3, 7, 7, black);
                 fb.draw_line(x - 2, y, x + 2, y, white);
