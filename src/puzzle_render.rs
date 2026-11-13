@@ -60,7 +60,7 @@ struct DissolveCacheKey {
     cur_frame: usize,
 }
 
-fn build_guide_playfield(full_picture_fb: &Framebuffer, board_bg: u8) -> Vec<[u8; 4]> {
+fn build_guide_playfield(full_picture_fb: &Framebuffer, board_bg: u8, out: &mut Vec<[u8; 4]>) {
     let bg = full_picture_fb.palette[board_bg as usize];
     let mut lut = [[0u8; 4]; 256];
     for (dst, src) in lut.iter_mut().zip(full_picture_fb.palette.iter()) {
@@ -71,14 +71,14 @@ fn build_guide_playfield(full_picture_fb: &Framebuffer, board_bg: u8) -> Vec<[u8
             255,
         ];
     }
-    let mut out = Vec::with_capacity((PLAYFIELD_W * PLAYFIELD_H) as usize);
+    out.clear();
+    out.reserve((PLAYFIELD_W * PLAYFIELD_H) as usize);
     for y in 0..PLAYFIELD_H {
         let row = ((2 + y) as usize) * 320 + 2;
         for x in 0..PLAYFIELD_W as usize {
             out.push(lut[full_picture_fb.pixels[row + x] as usize]);
         }
     }
-    out
 }
 
 /// Cached software renderer for [`PuzzleSession`].
@@ -291,7 +291,11 @@ impl PuzzleRenderer {
         }
         let full_picture_fb = &session.full_picture_fb;
         self.ui_colors = UiColors::from_framebuffer(full_picture_fb);
-        self.guide_playfield = build_guide_playfield(full_picture_fb, self.ui_colors.board_bg);
+        build_guide_playfield(
+            full_picture_fb,
+            self.ui_colors.board_bg,
+            &mut self.guide_playfield,
+        );
         self.synced_asset = Some(key);
     }
 
