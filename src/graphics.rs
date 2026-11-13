@@ -740,7 +740,12 @@ fn accumulate_frame_bounds(
                     width,
                     height,
                     ..
-                } => Some((cur_ox + x as i32, cur_oy + y as i32, width as i32, height as i32)),
+                } => Some((
+                    cur_ox + x as i32,
+                    cur_oy + y as i32,
+                    width as i32,
+                    height as i32,
+                )),
                 FrameCommand::Sprite {
                     x, y, sprite_idx, ..
                 } => puzzle.sprites.get(sprite_idx).map(|spr| {
@@ -1664,7 +1669,10 @@ mod tests {
         };
 
         // Geometry includes both the `0x0030` sub-frame at (10,10) and the `0x0720` sub-frame at (20,20)
-        assert_eq!(compute_frame_bounds(&asset, 0, 0, 0, 0, 0), (10, 10, 14, 14));
+        assert_eq!(
+            compute_frame_bounds(&asset, 0, 0, 0, 0, 0),
+            (10, 10, 14, 14)
+        );
         assert!(hit_test_frame(&asset, 0, 0, 0, 0, 11, 11, 0));
         assert!(hit_test_frame(&asset, 0, 0, 0, 0, 21, 21, 0));
 

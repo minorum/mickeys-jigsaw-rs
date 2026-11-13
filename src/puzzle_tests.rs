@@ -281,8 +281,7 @@ fn preset_board_keeps_native_layers_and_viewport_clipping() {
         for num in 1..=15 {
             let asset = PuzzleAsset::load(dir, num, ega).unwrap();
             let toolbox =
-                ToolboxAsset::load(&dir.join("MJP.TBX"), usize::from(asset.uses_ega()))
-                    .unwrap();
+                ToolboxAsset::load(&dir.join("MJP.TBX"), usize::from(asset.uses_ega())).unwrap();
             let mut session = PuzzleSession::new(num, asset, 1, true, true, false);
             for phase in 0..8 {
                 session.toolbox_open = phase < 4;
@@ -296,8 +295,7 @@ fn preset_board_keeps_native_layers_and_viewport_clipping() {
                 }
                 let mut expected_asset = session.asset.clone();
                 let frame_idx = session.asset.preset_frame_idx();
-                if let SceneRecord::Frame { commands, .. } =
-                    &mut expected_asset.records[frame_idx]
+                if let SceneRecord::Frame { commands, .. } = &mut expected_asset.records[frame_idx]
                 {
                     for (piece, command) in session.pieces.iter().zip(commands) {
                         if let FrameCommand::SubFrame { flags, .. } = command {
@@ -345,8 +343,7 @@ fn completed_picture_matches_the_assembled_board_pixels() {
         for id in 1..=15 {
             let asset = PuzzleAsset::load(dir, id, ega).unwrap();
             let toolbox =
-                ToolboxAsset::load(&dir.join("MJP.TBX"), usize::from(asset.uses_ega()))
-                    .unwrap();
+                ToolboxAsset::load(&dir.join("MJP.TBX"), usize::from(asset.uses_ega())).unwrap();
             let mut session = PuzzleSession::new(id, asset, 3, true, false, false);
             session.toolbox_open = false;
             for piece in &mut session.pieces {
@@ -822,8 +819,7 @@ fn all_solved_hotspot_centers_select_and_complete_their_animation() {
         for id in 1..=15 {
             let asset = PuzzleAsset::load(dir, id, ega).unwrap();
             let toolbox =
-                ToolboxAsset::load(&dir.join("MJP.TBX"), usize::from(asset.uses_ega()))
-                    .unwrap();
+                ToolboxAsset::load(&dir.join("MJP.TBX"), usize::from(asset.uses_ega())).unwrap();
             let mut session = PuzzleSession::new(id, asset, 2, false, false, false);
             session.solved = true;
             let header = session.asset.sequences[1].header_idx;

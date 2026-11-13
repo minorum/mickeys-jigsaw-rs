@@ -435,8 +435,7 @@ fn cut_pieces_cover_the_picture_exactly_once() {
             let asset = PuzzleAsset::load(&test_game_dir(), num, ega).unwrap();
             for dim in 2..=8 {
                 for curved in [false, true] {
-                    let session =
-                        PuzzleSession::new(num, asset.clone(), dim, curved, true, true);
+                    let session = PuzzleSession::new(num, asset.clone(), dim, curved, true, true);
                     let mut coverage = vec![0u8; 270 * 196];
                     for piece in &session.pieces {
                         for y in 0..piece.sprite.sub_h as i32 {
@@ -549,8 +548,7 @@ fn test_load_toolbox() {
     assert_eq!(cga.sprites.len(), 62);
     assert!(cga.sprites.iter().all(|sprite| sprite.bpp == 2));
     assert_eq!(cga.palette[3], [0, 170, 0]);
-    let decoded =
-        decompress::decompress_da(&std::fs::read(dir.join("MJP.TBX")).unwrap()).unwrap();
+    let decoded = decompress::decompress_da(&std::fs::read(dir.join("MJP.TBX")).unwrap()).unwrap();
     let chunks = decompress::split_multi_resource(&decoded).unwrap();
     let mut checked = 0;
     for row in include_str!("../validation/toolbox-oracle.tsv")
@@ -582,8 +580,7 @@ fn vga_palette_preserves_original_rgb_bytes() {
         let mut expected = None;
         while pos + 8 <= decoded.len() {
             let tag = &decoded[pos..pos + 4];
-            let size =
-                u32::from_le_bytes(decoded[pos + 4..pos + 8].try_into().unwrap()) as usize;
+            let size = u32::from_le_bytes(decoded[pos + 4..pos + 8].try_into().unwrap()) as usize;
             if tag == b"PALE" {
                 expected = Some(&decoded[pos + 8..pos + 8 + size]);
             }
@@ -658,8 +655,8 @@ fn test_load_all_15_puzzles_vga_and_ega_and_prt() {
         };
         assert!(pz4.sprites.iter().all(|sprite| sprite.bpp == expected_bpp));
 
-        let prt = PrintAsset::load(&dir, num)
-            .unwrap_or_else(|e| panic!("P{:02}.PRT failed: {}", num, e));
+        let prt =
+            PrintAsset::load(&dir, num).unwrap_or_else(|e| panic!("P{:02}.PRT failed: {}", num, e));
         assert_eq!(prt.bitmap.len(), 8000);
     }
 }
@@ -833,8 +830,7 @@ fn click_to_pick_place_complete_and_skip_animation() {
         for num in 1..=15 {
             let asset = PuzzleAsset::load(&dir, num, ega).unwrap();
             let toolbox =
-                ToolboxAsset::load(&dir.join("MJP.TBX"), usize::from(asset.uses_ega()))
-                    .unwrap();
+                ToolboxAsset::load(&dir.join("MJP.TBX"), usize::from(asset.uses_ega())).unwrap();
             for dim in 2..=8 {
                 for curved in [false, true] {
                     let mut session =
