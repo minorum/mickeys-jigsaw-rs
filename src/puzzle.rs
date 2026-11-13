@@ -1530,9 +1530,7 @@ impl PuzzleSession {
                 for x in x0..x1 {
                     if !cov_slice[x]
                         && dst_row[x] == bg_rgba
-                        && !piece
-                            .sprite
-                            .is_opaque(row_off + (x as i32 - hx) as usize)
+                        && !piece.sprite.is_opaque(row_off + (x as i32 - hx) as usize)
                     {
                         dst_row[x] = guide_row[x];
                     }
@@ -1756,12 +1754,7 @@ impl PuzzleSession {
         }
     }
 
-    pub fn present_key(
-        &self,
-        mouse_x: i32,
-        mouse_y: i32,
-        picture_guide: bool,
-    ) -> PuzzlePresentKey {
+    pub fn present_key(&self, mouse_x: i32, mouse_y: i32, picture_guide: bool) -> PuzzlePresentKey {
         if let Some(ref anim) = self.active_anim {
             let dissolve_step_bits = if anim.transition_mode == 8 {
                 anim.tick_accum.to_bits()
