@@ -1090,9 +1090,8 @@ fn blend_picture_guide_matches_reference_with_placed_held_and_clipped_pieces() {
                     let pic_c = session.full_picture_fb.get_pixel(2 + px, 2 + py);
                     let pic_rgb = session.full_picture_fb.palette[pic_c as usize];
                     for ch in 0..3 {
-                        expected[off + ch] = ((u16::from(bg_rgba[ch]) * 4
-                            + u16::from(pic_rgb[ch]))
-                            / 5) as u8;
+                        expected[off + ch] =
+                            ((u16::from(bg_rgba[ch]) * 4 + u16::from(pic_rgb[ch])) / 5) as u8;
                     }
                     expected[off + 3] = 255;
                 }
