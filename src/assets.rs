@@ -11,6 +11,39 @@ use std::path::Path;
 
 use crate::decompress::{IlbmImage, decode_ilbm, decompress_da, split_multi_resource};
 
+#[inline]
+fn le_u16(buf: &[u8], off: usize) -> u16 {
+    u16::from_le_bytes([buf[off], buf[off + 1]])
+}
+
+#[inline]
+fn le_i16(buf: &[u8], off: usize) -> i16 {
+    i16::from_le_bytes([buf[off], buf[off + 1]])
+}
+
+#[inline]
+fn le_u32(buf: &[u8], off: usize) -> u32 {
+    u32::from_le_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]])
+}
+
+#[inline]
+fn read_tagged_chunk<'a>(
+    buf: &'a [u8],
+    pos: &mut usize,
+    err: &str,
+) -> Result<(&'a [u8], &'a [u8]), String> {
+    let tag = &buf[*pos..*pos + 4];
+    let size = le_u32(buf, *pos + 4) as usize;
+    *pos += 8;
+    let end = pos
+        .checked_add(size)
+        .filter(|&end| end <= buf.len())
+        .ok_or_else(|| err.to_string())?;
+    let chunk = &buf[*pos..end];
+    *pos = end;
+    Ok((tag, chunk))
+}
+
 /// Proportional 1-bit font loaded from `MJP.NFT` (`616 x 10` strip, ASCII `32..127`).
 #[derive(Clone, Debug)]
 pub struct FontAsset {
@@ -35,17 +68,15 @@ impl FontAsset {
             return Err("Invalid MJP.NFT header".to_string());
         }
         let name = String::from_utf8_lossy(&data[8..16]).trim().to_string();
-        let strip_width = u16::from_le_bytes([data[16], data[17]]);
-        let height = u16::from_le_bytes([data[18], data[19]]);
+        let strip_width = le_u16(data, 16);
+        let height = le_u16(data, 18);
         let stride_bytes = (strip_width as usize).div_ceil(8);
 
         let mut char_x = [0u16; 96];
         let mut char_w = [0u16; 96];
         for i in 0..96 {
-            let ox = 20 + i * 2;
-            let ow = 212 + i * 2;
-            char_x[i] = u16::from_le_bytes([data[ox], data[ox + 1]]);
-            char_w[i] = u16::from_le_bytes([data[ow], data[ow + 1]]);
+            char_x[i] = le_u16(data, 20 + i * 2);
+            char_w[i] = le_u16(data, 212 + i * 2);
         }
 
         if strip_width == 0
@@ -144,18 +175,18 @@ impl Sprite8061 {
         if rec.len() < 26 {
             return Err("0x8061 record too short".to_string());
         }
-        let magic = u16::from_le_bytes([rec[0], rec[1]]);
+        let magic = le_u16(rec, 0);
         if magic != 0x8061 {
             return Err(format!("Expected 0x8061 sprite, got 0x{:04x}", magic));
         }
-        let stride = u16::from_le_bytes([rec[10], rec[11]]);
-        let height = u16::from_le_bytes([rec[12], rec[13]]);
+        let stride = le_u16(rec, 10);
+        let height = le_u16(rec, 12);
         let transparent_color = rec[17];
         let bpp = u16::from(rec[16]);
-        let sub_x = u16::from_le_bytes([rec[18], rec[19]]);
-        let sub_y = u16::from_le_bytes([rec[20], rec[21]]);
-        let width = u16::from_le_bytes([rec[22], rec[23]]);
-        let sub_h = u16::from_le_bytes([rec[24], rec[25]]);
+        let sub_x = le_u16(rec, 18);
+        let sub_y = le_u16(rec, 20);
+        let width = le_u16(rec, 22);
+        let sub_h = le_u16(rec, 24);
 
         let raw = &rec[26..];
         let total_px = (stride as usize) * (height as usize);
@@ -243,28 +274,15 @@ impl ToolboxAsset {
         let mut palette_payload = None;
 
         while pos + 8 <= buf.len() {
-            let tag = &buf[pos..pos + 4];
-            let csz = u32::from_le_bytes([buf[pos + 4], buf[pos + 5], buf[pos + 6], buf[pos + 7]])
-                as usize;
-            pos += 8;
-            let end = pos
-                .checked_add(csz)
-                .filter(|&end| end <= buf.len())
-                .ok_or("Truncated toolbox chunk")?;
-            let chunk = &buf[pos..end];
+            let (tag, chunk) = read_tagged_chunk(buf, &mut pos, "Truncated toolbox chunk")?;
 
             if tag == b"PALE" {
                 palette_payload = Some(chunk);
             } else if tag == b"TBOX" {
                 let mut sp = 0usize;
                 while sp + 6 <= chunk.len() {
-                    let rtype = u16::from_le_bytes([chunk[sp], chunk[sp + 1]]);
-                    let rsz = u32::from_le_bytes([
-                        chunk[sp + 2],
-                        chunk[sp + 3],
-                        chunk[sp + 4],
-                        chunk[sp + 5],
-                    ]) as usize;
+                    let rtype = le_u16(chunk, sp);
+                    let rsz = le_u32(chunk, sp + 2) as usize;
                     if rsz < 6 {
                         return Err("Invalid toolbox record size".to_string());
                     }
@@ -281,7 +299,6 @@ impl ToolboxAsset {
                     return Err("Truncated toolbox record header".to_string());
                 }
             }
-            pos = end;
         }
 
         if pos != buf.len() {
@@ -556,14 +573,7 @@ impl PuzzleAsset {
             {
                 break;
             }
-            let csz = u32::from_le_bytes([buf[pos + 4], buf[pos + 5], buf[pos + 6], buf[pos + 7]])
-                as usize;
-            pos += 8;
-            let end = pos
-                .checked_add(csz)
-                .filter(|&end| end <= buf.len())
-                .ok_or("Truncated puzzle chunk")?;
-            let chunk = &buf[pos..end];
+            let (tag, chunk) = read_tagged_chunk(buf, &mut pos, "Truncated puzzle chunk")?;
 
             if tag == b"PALE" {
                 if chunk.len() < 48 {
@@ -583,7 +593,6 @@ impl PuzzleAsset {
                 main_chunk = Some(chunk);
                 break;
             }
-            pos = end;
         }
 
         let chunk = main_chunk.ok_or_else(|| "Missing MCG0/TND0 chunk in puzzle".to_string())?;
@@ -595,7 +604,7 @@ impl PuzzleAsset {
         full_anim_seq_idx: &mut usize,
         all_hotspots: &mut Vec<Hotspot>,
     ) -> Result<(String, SceneRecord), String> {
-        let sub_cnt = u16::from_le_bytes([rec[6], rec[7]]) as usize;
+        let sub_cnt = le_u16(rec, 6) as usize;
         let name = String::from_utf8_lossy(&rec[8..16]).trim().to_string();
         let mut hotspots = Vec::new();
         let mut default_playback = None;
@@ -604,8 +613,8 @@ impl PuzzleAsset {
             if sp + 4 > rec.len() {
                 return Err("Truncated sequence command table".to_string());
             }
-            let ctype = u16::from_le_bytes([rec[sp], rec[sp + 1]]);
-            let csz = u16::from_le_bytes([rec[sp + 2], rec[sp + 3]]) as usize;
+            let ctype = le_u16(rec, sp);
+            let csz = le_u16(rec, sp + 2) as usize;
             if csz < 4 || sp + csz > rec.len() {
                 return Err("Invalid sequence command size".to_string());
             }
@@ -613,25 +622,25 @@ impl PuzzleAsset {
                 return Err(format!("Truncated sequence command {ctype:#06x}"));
             }
             if ctype == 0x0010 {
-                let sidx = u16::from_le_bytes([rec[sp + 4], rec[sp + 5]]) as usize;
+                let sidx = le_u16(rec, sp + 4) as usize;
                 default_playback = Some(SequencePlayback {
                     seq_idx: sidx,
-                    repetitions: u16::from_le_bytes([rec[sp + 6], rec[sp + 7]]),
-                    frame_delay_ticks: u16::from_le_bytes([rec[sp + 8], rec[sp + 9]]),
+                    repetitions: le_u16(rec, sp + 6),
+                    frame_delay_ticks: le_u16(rec, sp + 8),
                 });
                 *full_anim_seq_idx = sidx;
             } else if ctype == 0x0011 {
-                let sidx = u16::from_le_bytes([rec[sp + 4], rec[sp + 5]]) as usize;
+                let sidx = le_u16(rec, sp + 4) as usize;
                 let hs = Hotspot {
                     playback: SequencePlayback {
                         seq_idx: sidx,
-                        repetitions: u16::from_le_bytes([rec[sp + 6], rec[sp + 7]]),
-                        frame_delay_ticks: u16::from_le_bytes([rec[sp + 8], rec[sp + 9]]),
+                        repetitions: le_u16(rec, sp + 6),
+                        frame_delay_ticks: le_u16(rec, sp + 8),
                     },
-                    x: i16::from_le_bytes([rec[sp + 14], rec[sp + 15]]),
-                    y: i16::from_le_bytes([rec[sp + 16], rec[sp + 17]]),
-                    width: i16::from_le_bytes([rec[sp + 18], rec[sp + 19]]),
-                    height: i16::from_le_bytes([rec[sp + 20], rec[sp + 21]]),
+                    x: le_i16(rec, sp + 14),
+                    y: le_i16(rec, sp + 16),
+                    width: le_i16(rec, sp + 18),
+                    height: le_i16(rec, sp + 20),
                 };
                 hotspots.push(hs.clone());
                 all_hotspots.push(hs);
@@ -652,17 +661,17 @@ impl PuzzleAsset {
     }
 
     fn parse_frame_record(rec: &[u8]) -> Result<SceneRecord, String> {
-        let bg_frame_idx = u16::from_le_bytes([rec[6], rec[7]]) as usize;
-        let bg_color = u16::from_le_bytes([rec[8], rec[9]]);
-        let sub_cnt = u16::from_le_bytes([rec[10], rec[11]]) as usize;
+        let bg_frame_idx = le_u16(rec, 6) as usize;
+        let bg_color = le_u16(rec, 8);
+        let sub_cnt = le_u16(rec, 10) as usize;
         let mut commands = Vec::with_capacity(sub_cnt);
         let mut sp = 12usize;
         for _ in 0..sub_cnt {
             if sp + 4 > rec.len() {
                 return Err("Truncated frame command table".to_string());
             }
-            let ctype = u16::from_le_bytes([rec[sp], rec[sp + 1]]);
-            let csz = u16::from_le_bytes([rec[sp + 2], rec[sp + 3]]) as usize;
+            let ctype = le_u16(rec, sp);
+            let csz = le_u16(rec, sp + 2) as usize;
             if csz < 4 || sp + csz > rec.len() {
                 return Err("Invalid frame command size".to_string());
             }
@@ -680,7 +689,7 @@ impl PuzzleAsset {
             }
             match ctype {
                 0x0020 => {
-                    let raw_idx = u16::from_le_bytes([sub[4], sub[5]]);
+                    let raw_idx = le_u16(sub, 4);
                     let snd_idx = if raw_idx == 0 || raw_idx == 0x7FFF {
                         None
                     } else {
@@ -689,60 +698,59 @@ impl PuzzleAsset {
                     commands.push(FrameCommand::Sound { snd_idx });
                 }
                 0x0030 => {
-                    let raw = u16::from_le_bytes([sub[4], sub[5]]);
+                    let raw = le_u16(sub, 4);
                     let ticks = (raw >> 6) & 0x03FF;
                     commands.push(FrameCommand::Delay { raw, ticks });
                 }
                 0x0040 => {
                     commands.push(FrameCommand::SubFrame {
-                        dx: i16::from_le_bytes([sub[4], sub[5]]),
-                        dy: i16::from_le_bytes([sub[6], sub[7]]),
-                        frame_idx: u16::from_le_bytes([sub[8], sub[9]]) as usize,
-                        flags: u16::from_le_bytes([sub[10], sub[11]]),
+                        dx: le_i16(sub, 4),
+                        dy: le_i16(sub, 6),
+                        frame_idx: le_u16(sub, 8) as usize,
+                        flags: le_u16(sub, 10),
                     });
                 }
                 0x0050 => {
                     commands.push(FrameCommand::Rect {
-                        x: i16::from_le_bytes([sub[4], sub[5]]),
-                        y: i16::from_le_bytes([sub[6], sub[7]]),
-                        color: u16::from_le_bytes([sub[8], sub[9]]),
-                        flags: u16::from_le_bytes([sub[10], sub[11]]),
-                        width: i16::from_le_bytes([sub[12], sub[13]]),
-                        height: i16::from_le_bytes([sub[14], sub[15]]),
+                        x: le_i16(sub, 4),
+                        y: le_i16(sub, 6),
+                        color: le_u16(sub, 8),
+                        flags: le_u16(sub, 10),
+                        width: le_i16(sub, 12),
+                        height: le_i16(sub, 14),
                     });
                 }
                 0x0060 => {
-                    let raw_id = u16::from_le_bytes([sub[8], sub[9]]) as usize;
+                    let raw_id = le_u16(sub, 8) as usize;
                     // `raw_id > 0` is 1-based in the file; `0` maps to `0`.
                     commands.push(FrameCommand::Sprite {
-                        x: i16::from_le_bytes([sub[4], sub[5]]),
-                        y: i16::from_le_bytes([sub[6], sub[7]]),
+                        x: le_i16(sub, 4),
+                        y: le_i16(sub, 6),
                         sprite_idx: raw_id.saturating_sub(1),
-                        flags: u16::from_le_bytes([sub[10], sub[11]]),
+                        flags: le_u16(sub, 10),
                     });
                 }
                 0x0080 => {
-                    let raw_id = u16::from_le_bytes([sub[8], sub[9]]) as usize;
+                    let raw_id = le_u16(sub, 8) as usize;
                     commands.push(FrameCommand::Text {
-                        x: i16::from_le_bytes([sub[4], sub[5]]),
-                        y: i16::from_le_bytes([sub[6], sub[7]]),
+                        x: le_i16(sub, 4),
+                        y: le_i16(sub, 6),
                         res_idx: raw_id.saturating_sub(1),
-                        flags: u16::from_le_bytes([sub[10], sub[11]]),
-                        font_and_color: u16::from_le_bytes([sub[12], sub[13]]),
+                        flags: le_u16(sub, 10),
+                        font_and_color: le_u16(sub, 12),
                     });
                 }
                 0x0090 => {
-                    let raw_id = u16::from_le_bytes([sub[8], sub[9]]) as usize;
+                    let raw_id = le_u16(sub, 8) as usize;
                     let mut params = [0i16; 8];
                     for (pi, param) in params.iter_mut().enumerate() {
-                        let o = 12 + pi * 2;
-                        *param = i16::from_le_bytes([sub[o], sub[o + 1]]);
+                        *param = le_i16(sub, 12 + pi * 2);
                     }
                     commands.push(FrameCommand::Polygon {
-                        x: i16::from_le_bytes([sub[4], sub[5]]),
-                        y: i16::from_le_bytes([sub[6], sub[7]]),
+                        x: le_i16(sub, 4),
+                        y: le_i16(sub, 6),
                         res_idx: raw_id.saturating_sub(1),
-                        flags: u16::from_le_bytes([sub[10], sub[11]]),
+                        flags: le_u16(sub, 10),
                         params,
                     });
                 }
@@ -762,7 +770,7 @@ impl PuzzleAsset {
 
     fn parse_sound_bubble_record(rec: &[u8]) -> Result<SoundBubbleEntry, String> {
         let tag = String::from_utf8_lossy(&rec[6..14]).trim().to_string();
-        let num_snds = u16::from_le_bytes([rec[24], rec[25]]) as usize;
+        let num_snds = le_u16(rec, 24) as usize;
         if 28 + num_snds * 14 > rec.len() {
             return Err("Truncated scene sound descriptors".to_string());
         }
@@ -770,7 +778,7 @@ impl PuzzleAsset {
         let mut sp = 28usize;
         for _ in 0..num_snds {
             let stem = String::from_utf8_lossy(&rec[sp..sp + 8]).trim().to_string();
-            let phrase_idx = u16::from_le_bytes([rec[sp + 8], rec[sp + 9]]);
+            let phrase_idx = le_u16(rec, sp + 8);
             snd_list.push(SoundDescriptor { stem, phrase_idx });
             sp += 14;
         }
@@ -781,7 +789,7 @@ impl PuzzleAsset {
         Ok(SoundBubbleEntry {
             tag,
             sounds: snd_list,
-            selection_mode: u16::from_le_bytes([rec[26], rec[27]]),
+            selection_mode: le_u16(rec, 26),
             bubbles,
         })
     }
@@ -797,9 +805,9 @@ impl PuzzleAsset {
         let mut sprites = Vec::new();
 
         while rpos + 4 <= chunk.len() {
-            let rtype = u16::from_le_bytes([chunk[rpos], chunk[rpos + 1]]);
+            let rtype = le_u16(chunk, rpos);
             if (rtype & 0x8000) == 0 {
-                let rsz = u16::from_le_bytes([chunk[rpos + 2], chunk[rpos + 3]]) as usize;
+                let rsz = le_u16(chunk, rpos + 2) as usize;
                 if rsz < 4 || rpos + rsz > chunk.len() {
                     return Err(format!("Invalid scene record size at {rpos:#x}"));
                 }
@@ -823,12 +831,7 @@ impl PuzzleAsset {
                 if rpos + 6 > chunk.len() {
                     return Err("Truncated scene resource header".to_string());
                 }
-                let rsz = u32::from_le_bytes([
-                    chunk[rpos + 2],
-                    chunk[rpos + 3],
-                    chunk[rpos + 4],
-                    chunk[rpos + 5],
-                ]) as usize;
+                let rsz = le_u32(chunk, rpos + 2) as usize;
                 if rsz < 6 || rpos + rsz > chunk.len() {
                     return Err(format!("Invalid scene resource size at {rpos:#x}"));
                 }
