@@ -1,0 +1,12 @@
+warning: Missing auto-load script at offset 0 in section .debug_gdb_scripts
+of file /home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN/target/debug/mickeys-jigsaw-puzzles.
+Use `info auto-load python-scripts [REGEXP]' to list them.
+Breakpoint 1 at 0xc9313: file src/puzzle.rs, line 685.
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib64/libthread_db.so.1".
+[New Thread 0x7fffe87ff6c0 (LWP 962044)]
+[New Thread 0x7fffe7e6f6c0 (LWP 962045)]
+[New Thread 0x7fffe74df6c0 (LWP 962047)]
+[New Thread 0x7fffe6b4f6c0 (LWP 962048)]
+Credits unavailable: Truncated DA bitstream
+COMPLETED=1,2

@@ -1,0 +1,24 @@
+   Compiling mickeys-jigsaw-puzzles v0.1.0 (/home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.86s
+     Running unittests src/main.rs (target/debug/deps/mickeys_jigsaw_puzzles-491c5df3117d1a37)
+
+running 1 test
+test puzzle::tests::original_dialogue_is_visible_and_waits_when_muted ... FAILED
+
+failures:
+
+---- puzzle::tests::original_dialogue_is_visible_and_waits_when_muted stdout ----
+
+thread 'puzzle::tests::original_dialogue_is_visible_and_waits_when_muted' (538340) panicked at src/puzzle.rs:1247:9:
+assertion `left == right` failed
+  left: 15
+ right: 248
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    puzzle::tests::original_dialogue_is_visible_and_waits_when_muted
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `--bin mickeys-jigsaw-puzzles`

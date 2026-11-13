@@ -1,0 +1,24 @@
+   Compiling mickeys-jigsaw-puzzles v0.1.0 (/home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.58s
+     Running unittests src/main.rs (target/debug/deps/mickeys_jigsaw_puzzles-491c5df3117d1a37)
+
+running 1 test
+test graphics::tests::nested_reflection_bounds_match_original_machine_code ... FAILED
+
+failures:
+
+---- graphics::tests::nested_reflection_bounds_match_original_machine_code stdout ----
+
+thread 'graphics::tests::nested_reflection_bounds_match_original_machine_code' (616679) panicked at src/graphics.rs:784:13:
+assertion `left == right` failed: 1	1	0	311	43	13	17
+  left: (-287, 43, 13, 17)
+ right: (311, 43, 13, 17)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    graphics::tests::nested_reflection_bounds_match_original_machine_code
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 61 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--bin mickeys-jigsaw-puzzles`

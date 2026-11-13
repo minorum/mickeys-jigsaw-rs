@@ -1,0 +1,5 @@
+Keyboard pickup and placement input for piece 0
+Keyboard pickup and placement input for piece 3
+Keyboard pickup and placement input for piece 1
+Keyboard pickup and placement input for piece 2
+P01 completed using only real key events; no pointer events or auto-solve; keyboard animation skip and menu activation exercised

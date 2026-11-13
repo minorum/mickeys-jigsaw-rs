@@ -1,0 +1,3 @@
+New puzzle constructions: 2 (initial start and explicit R)
+Placed-picture pixels preserved on resume; cleared by restart
+GUI_RESUME_ASSERTIONS=PASS

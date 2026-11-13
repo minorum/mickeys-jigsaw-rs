@@ -1,0 +1,12 @@
+{
+  "paused": {
+    "seconds": 1.1946666666666668,
+    "peak": 0,
+    "nonzero": 0
+  },
+  "resumed": {
+    "seconds": 1.4933333333333334,
+    "peak": 19975,
+    "nonzero": 120534
+  }
+}

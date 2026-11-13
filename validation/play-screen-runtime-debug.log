@@ -1,0 +1,29 @@
+warning: Missing auto-load script at offset 0 in section .debug_gdb_scripts
+of file /home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN/target/debug/mickeys-jigsaw-puzzles.
+Use `info auto-load python-scripts [REGEXP]' to list them.
+Temporary breakpoint 1 at 0x48012: file src/main.rs, line 216.
+Breakpoint 2 at 0xc9313: file src/puzzle.rs, line 685.
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib64/libthread_db.so.1".
+libEGL warning: DRI3 error: Could not get DRI3 device
+libEGL warning: Ensure your X server supports DRI3 to get accelerated rendering
+[New Thread 0x7fffe8bff6c0 (LWP 963359)]
+[New Thread 0x7fffe826f6c0 (LWP 963360)]
+[New Thread 0x7fffe78df6c0 (LWP 963361)]
+[New Thread 0x7fffe6f4f6c0 (LWP 963362)]
+[New Thread 0x7fffe65bf6c0 (LWP 963363)]
+[New Thread 0x7fffe5c2f6c0 (LWP 963364)]
+[New Thread 0x7fffe529f6c0 (LWP 963365)]
+[New Thread 0x7fffc7fff6c0 (LWP 963366)]
+[New Thread 0x7fffc766f6c0 (LWP 963367)]
+[New Thread 0x7fffc6cdf6c0 (LWP 963368)]
+[New Thread 0x7fffc634f6c0 (LWP 963369)]
+[New Thread 0x7fffc59bf6c0 (LWP 963370)]
+[New Thread 0x7fffc502f6c0 (LWP 963371)]
+[New Thread 0x7fffaffff6c0 (LWP 963372)]
+[New Thread 0x7fffaf66f6c0 (LWP 963373)]
+[New Thread 0x7fffaecdf6c0 (LWP 963374)]
+[New Thread 0x7fffae34f6c0 (LWP 963375)]
+Credits unavailable: Truncated DA bitstream
+READY
+COMPLETED=1,2

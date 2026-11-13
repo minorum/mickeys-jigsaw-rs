@@ -1,0 +1,42 @@
+[
+  {
+    "step": "initial",
+    "events": [
+      "stop",
+      "play"
+    ],
+    "mode": 2,
+    "queued": 1
+  },
+  {
+    "step": "speaker_busy",
+    "events": [],
+    "mode": 2,
+    "queued": 1
+  },
+  {
+    "step": "sample_busy",
+    "events": [],
+    "mode": 2,
+    "queued": 1
+  },
+  {
+    "step": "finished",
+    "events": [
+      "play"
+    ],
+    "mode": 2,
+    "queued": 1
+  },
+  {
+    "step": "ordinary_replacement",
+    "events": [
+      "stop",
+      "play"
+    ],
+    "mode": 0,
+    "queued": 0
+  }
+]
+IRQ8_COUNTDOWNS=[[2, 0], [1, 0], [0, 0], [0, 0]]
+BUBBLE_PIXEL_INDICES={"VGA": [248, 16], "EGA": [15, 1]}

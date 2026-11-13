@@ -1,0 +1,5 @@
+Invalid prefix result: Ok([0, 0])
+
+thread 'main' (796201) panicked at /tmp/mickey-invalid-prefix.rs:21:5:
+assertion failed: invalid.is_err()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

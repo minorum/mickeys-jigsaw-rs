@@ -1,0 +1,50 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/main.rs (target/debug/deps/mickeys_jigsaw_puzzles-491c5df3117d1a37)
+
+running 6 tests
+test tests::test_load_font_and_measure_text ... ok
+test tests::test_load_toolbox ... FAILED
+test tests::test_load_all_15_puzzles_vga_and_ega_and_prt ... FAILED
+test tests::test_audio_decoders_nnv_ess_and_iss ... FAILED
+test tests::test_load_title_and_credits_ilbm ... FAILED
+test tests::test_puzzle_cutting_all_difficulties_curved_and_straight ... ok
+
+failures:
+
+---- tests::test_load_toolbox stdout ----
+
+thread 'tests::test_load_toolbox' (409067) panicked at src/main.rs:639:9:
+assertion `left == right` failed
+  left: 65
+ right: 61
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- tests::test_load_all_15_puzzles_vga_and_ega_and_prt stdout ----
+
+thread 'tests::test_load_all_15_puzzles_vga_and_ega_and_prt' (409064) panicked at src/main.rs:663:13:
+assertion `left == right` failed
+  left: 53
+ right: 50
+
+---- tests::test_audio_decoders_nnv_ess_and_iss stdout ----
+
+thread 'tests::test_audio_decoders_nnv_ess_and_iss' (409063) panicked at src/main.rs:714:13:
+NNV bank BUBGUM phrase 0 should produce samples
+
+---- tests::test_load_title_and_credits_ilbm stdout ----
+
+thread 'tests::test_load_title_and_credits_ilbm' (409066) panicked at src/main.rs:628:9:
+assertion `left == right` failed
+  left: 5
+ right: 2
+
+
+failures:
+    tests::test_audio_decoders_nnv_ess_and_iss
+    tests::test_load_all_15_puzzles_vga_and_ega_and_prt
+    tests::test_load_title_and_credits_ilbm
+    tests::test_load_toolbox
+
+test result: FAILED. 2 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+error: test failed, to rerun pass `--bin mickeys-jigsaw-puzzles`

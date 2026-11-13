@@ -1,0 +1,24 @@
+   Compiling mickeys-jigsaw-puzzles v0.1.0 (/home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.52s
+     Running unittests src/main.rs (target/debug/deps/mickeys_jigsaw_puzzles-491c5df3117d1a37)
+
+running 1 test
+test graphics::tests::ega_scene_rasters_match_original_traversal_and_driver ... FAILED
+
+failures:
+
+---- graphics::tests::ega_scene_rasters_match_original_traversal_and_driver stdout ----
+
+thread 'graphics::tests::ega_scene_rasters_match_original_traversal_and_driver' (863422) panicked at src/graphics.rs:894:13:
+assertion `left == right` failed: P03.PZ4	3	168	c565572bf72b85db
+  left: 3877892128829711527
+ right: 14223870844461614555
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    graphics::tests::ega_scene_rasters_match_original_traversal_and_driver
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 94 filtered out; finished in 1.99s
+
+error: test failed, to rerun pass `--bin mickeys-jigsaw-puzzles`

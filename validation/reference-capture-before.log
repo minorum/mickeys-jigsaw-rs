@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN/validation/play_screen_gameplay.py", line 113, in <module>
+    assert before.crop((156, 100, 930, 660)).tobytes() == outside.crop((156, 100, 930, 660)).tobytes(), 'Held reference must survive pointer leaving its button'
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Held reference must survive pointer leaving its button

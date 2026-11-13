@@ -1,0 +1,6 @@
+/tmp/mickey-ui-runtime.py:18: DeprecationWarning: Image.Image.getdata is deprecated and will be removed in Pillow 14 (2027-10-15). Use get_flattened_data instead.
+  colors=set(puzzle.crop((268*3,4*3,316*3,15*3)).getdata())
+EGA browser: black banner, dark-blue button
+EGA puzzle: neutral gray tray; timer uses only black and white
+VGA fallback tray: (47, 42, 47)
+GUI_UI_PALETTE_ASSERTIONS=PASS

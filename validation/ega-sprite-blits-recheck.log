@@ -1,0 +1,14 @@
+Masked-write model calibrated against known pixels in all four orientations
+scene-P01.PZ4.raw: 50 converted sprites drawn
+scene-P02.PZ4.raw: 86 converted sprites drawn
+scene-P03.PZ4.raw: 92 converted sprites drawn
+scene-P04.PZ4.raw: 43 converted sprites drawn
+scene-P05.PZ4.raw: 75 converted sprites drawn
+scene-P08.PZ4.raw: 53 converted sprites drawn
+scene-P09.PZ4.raw: 45 converted sprites drawn
+scene-P11.PZ4.raw: 34 converted sprites drawn
+scene-P12.PZ4.raw: 78 converted sprites drawn
+scene-P13.PZ4.raw: 50 converted sprites drawn
+scene-P14.PZ4.raw: 65 converted sprites drawn
+scene-P15.PZ4.raw: 51 converted sprites drawn
+2984 native EGA full-frame blit hashes; 423000 masked byte writes

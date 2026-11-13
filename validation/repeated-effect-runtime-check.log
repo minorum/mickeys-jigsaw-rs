@@ -1,0 +1,2 @@
+Restart trace: ['LOOP_RESTART frame=40 sound=3 descriptor=1', 'LOOP_RESTART frame=42 sound=3 descriptor=1', 'LOOP_RESTART frame=44 sound=3 descriptor=1']
+{'bytes': 1905596, 'rate': 48000, 'channels': 2, 'format': 'S16_LE', 'seconds': 9.924979166666667, 'nonzero_samples': 348498, 'peak': 24384, 'game_alive_after_inputs': True}

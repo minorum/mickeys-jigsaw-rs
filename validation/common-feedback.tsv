@@ -1,0 +1,16 @@
+event	archive	resource	phrase	caption
+0	DATA.ESS	0	3	
+1	PROG.ESS	0	0	
+2	PROG.ESS	1	0	
+3	DATA.ESS	0	0	What's the next picture?
+4	DATA.ESS	0	1	Let's look at the last picture.
+5	DATA.ESS	0	2	Let's make this one.
+6	DATA.ESS	0	4	
+7	DATA.ESS	1	0	Please choose how many pieces\ryou want in our puzzle.
+8	DATA.ESS	2	0	Let's choose a piece.
+9	DATA.ESS	3	0	Let's put this one back for now.
+10	DATA.ESS	4	0	Let's make a different\rpuzzle.
+11	DATA.ESS	5	0	Let's use a different piece size.
+12	DATA.ESS	6	0	Let's see what happens.
+13	DATA.ESS	7	0	I guess we're done with this one.
+14	DATA.ESS	8	0	We're not done yet.

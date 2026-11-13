@@ -1,0 +1,22 @@
+   Compiling mickeys-jigsaw-puzzles v0.1.0 (/home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.56s
+     Running unittests src/main.rs (target/debug/deps/mickeys_jigsaw_puzzles-491c5df3117d1a37)
+
+running 1 test
+test tests::click_to_pick_place_complete_and_skip_animation ... FAILED
+
+failures:
+
+---- tests::click_to_pick_place_complete_and_skip_animation stdout ----
+
+thread 'tests::click_to_pick_place_complete_and_skip_animation' (639014) panicked at src/main.rs:1376:25:
+stale pickup caption after P01
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::click_to_pick_place_complete_and_skip_animation
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 64 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `--bin mickeys-jigsaw-puzzles`

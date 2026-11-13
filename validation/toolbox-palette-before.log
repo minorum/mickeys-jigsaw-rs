@@ -1,0 +1,23 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running unittests src/main.rs (target/debug/deps/mickeys_jigsaw_puzzles-491c5df3117d1a37)
+
+running 1 test
+test assets::tests::toolbox_complete_palette_and_unknown_chunks_remain_valid ... FAILED
+
+failures:
+
+---- assets::tests::toolbox_complete_palette_and_unknown_chunks_remain_valid stdout ----
+
+thread 'assets::tests::toolbox_complete_palette_and_unknown_chunks_remain_valid' (724639) panicked at src/assets.rs:990:9:
+assertion `left == right` failed
+  left: [0, 0, 0]
+ right: [2, 3, 4]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    assets::tests::toolbox_complete_palette_and_unknown_chunks_remain_valid
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 73 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--bin mickeys-jigsaw-puzzles`

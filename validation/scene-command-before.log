@@ -1,0 +1,22 @@
+   Compiling mickeys-jigsaw-puzzles v0.1.0 (/home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.01s
+     Running unittests src/main.rs (target/debug/deps/mickeys_jigsaw_puzzles-491c5df3117d1a37)
+
+running 1 test
+test assets::tests::recognized_scene_commands_require_their_payload ... FAILED
+
+failures:
+
+---- assets::tests::recognized_scene_commands_require_their_payload stdout ----
+
+thread 'assets::tests::recognized_scene_commands_require_their_payload' (711446) panicked at src/assets.rs:972:17:
+0x10 size=4
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    assets::tests::recognized_scene_commands_require_their_payload
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 71 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--bin mickeys-jigsaw-puzzles`

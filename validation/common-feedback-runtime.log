@@ -1,0 +1,37 @@
+warning: Missing auto-load script at offset 0 in section .debug_gdb_scripts
+of file /home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN/target/debug/mickeys-jigsaw-puzzles.
+Use `info auto-load python-scripts [REGEXP]' to list them.
+Breakpoint 1 at 0x51931: file src/audio.rs, line 592.
+Breakpoint 2 at 0x518dd: file src/audio.rs, line 600.
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib64/libthread_db.so.1".
+libEGL warning: DRI3 error: Could not get DRI3 device
+libEGL warning: Ensure your X server supports DRI3 to get accelerated rendering
+[New Thread 0x7fffe8bff6c0 (LWP 597454)]
+[New Thread 0x7fffe01ff6c0 (LWP 597455)]
+[New Thread 0x7fffe3fff6c0 (LWP 597456)]
+[New Thread 0x7fffe366f6c0 (LWP 597457)]
+[New Thread 0x7fffe2cdf6c0 (LWP 597458)]
+[New Thread 0x7fffe234f6c0 (LWP 597459)]
+[New Thread 0x7fffe19bf6c0 (LWP 597460)]
+[New Thread 0x7fffe102f6c0 (LWP 597461)]
+[New Thread 0x7fffdf86f6c0 (LWP 597462)]
+[New Thread 0x7fffdeedf6c0 (LWP 597463)]
+[New Thread 0x7fffde54f6c0 (LWP 597464)]
+[New Thread 0x7fffddbbf6c0 (LWP 597465)]
+[New Thread 0x7fffdd22f6c0 (LWP 597466)]
+[New Thread 0x7fffa7fff6c0 (LWP 597467)]
+[New Thread 0x7fffa766f6c0 (LWP 597468)]
+[New Thread 0x7fff9ebff6c0 (LWP 597469)]
+[New Thread 0x7fffa6cdf6c0 (LWP 597470)]
+Credits unavailable: Truncated DA bitstream
+[New Thread 0x7fffa4cfc6c0 (LWP 597471)]
+COMMON_EVENT=mickeys_jigsaw_puzzles::audio::CommonSound::NextPicture
+COMMON_EVENT=mickeys_jigsaw_puzzles::audio::CommonSound::PreviousPicture
+COMMON_EVENT=mickeys_jigsaw_puzzles::audio::CommonSound::ChooseSize
+COMMON_EVENT=mickeys_jigsaw_puzzles::audio::CommonSound::ChooseSize
+COMMON_EVENT=mickeys_jigsaw_puzzles::audio::CommonSound::StartPuzzle
+COMMON_EVENT=mickeys_jigsaw_puzzles::audio::CommonSound::ChoosePiece
+ERROR_BUZZ
+COMMON_EVENT=mickeys_jigsaw_puzzles::audio::CommonSound::ReturnPiece
+COMMON_EVENT=mickeys_jigsaw_puzzles::audio::CommonSound::OtherPicture

@@ -1,0 +1,10 @@
+{
+  "bytes": 2241596,
+  "rate": 48000,
+  "channels": 2,
+  "format": "S16_LE",
+  "seconds": 11.674979166666667,
+  "nonzero_samples": 449190,
+  "peak": 27087,
+  "game_alive_after_inputs": true
+}

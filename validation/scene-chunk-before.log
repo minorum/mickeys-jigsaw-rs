@@ -1,0 +1,21 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running unittests src/main.rs (target/debug/deps/mickeys_jigsaw_puzzles-491c5df3117d1a37)
+
+running 1 test
+test assets::tests::puzzle_chunks_reject_truncated_declared_sizes_and_palettes ... FAILED
+
+failures:
+
+---- assets::tests::puzzle_chunks_reject_truncated_declared_sizes_and_palettes stdout ----
+
+thread 'assets::tests::puzzle_chunks_reject_truncated_declared_sizes_and_palettes' (711465) panicked at src/assets.rs:985:9:
+assertion failed: PuzzleAsset::from_decompressed(1, &data).is_err()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    assets::tests::puzzle_chunks_reject_truncated_declared_sizes_and_palettes
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 71 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--bin mickeys-jigsaw-puzzles`

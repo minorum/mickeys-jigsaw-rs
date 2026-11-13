@@ -1,0 +1,40 @@
+# Build
+/target/
+
+# Runtime
+/prints/
+/mjp_config.pre
+
+# Python tools
+__pycache__/
+*.py[cod]
+.venv/
+
+# Local analysis
+/scratch/
+/unpacked/
+/captures/
+
+# Original 1991 DOS game assets (not redistributed)
+*.EXE
+*.OVL
+*.PZ4
+*.PZ8
+*.PRT
+*.NNV
+*.ESS
+*.ISS
+MJP.*
+file_id.diz
+
+# Captured screenshots of copyrighted artwork
+/validation/*.png
+/validation/*.bmp
+/validation/*.wav
+
+# Editor and desktop files
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

@@ -1,0 +1,58 @@
+warning: Missing auto-load script at offset 0 in section .debug_gdb_scripts
+of file /home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN/target/debug/mickeys-jigsaw-puzzles.
+Use `info auto-load python-scripts [REGEXP]' to list them.
+Breakpoint 1 at 0xc9273: file src/puzzle.rs, line 685.
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib64/libthread_db.so.1".
+libEGL warning: DRI3 error: Could not get DRI3 device
+libEGL warning: Ensure your X server supports DRI3 to get accelerated rendering
+[New Thread 0x7fffe8bff6c0 (LWP 938697)]
+[New Thread 0x7fffe01ff6c0 (LWP 938698)]
+[New Thread 0x7fffe3fff6c0 (LWP 938699)]
+[New Thread 0x7fffe366f6c0 (LWP 938700)]
+[New Thread 0x7fffe2cdf6c0 (LWP 938701)]
+[New Thread 0x7fffe234f6c0 (LWP 938702)]
+[New Thread 0x7fffe19bf6c0 (LWP 938703)]
+[New Thread 0x7fffe102f6c0 (LWP 938704)]
+[New Thread 0x7fffdf86f6c0 (LWP 938705)]
+[New Thread 0x7fffdeedf6c0 (LWP 938706)]
+[New Thread 0x7fffde54f6c0 (LWP 938707)]
+[New Thread 0x7fffddbbf6c0 (LWP 938708)]
+[New Thread 0x7fffdd22f6c0 (LWP 938709)]
+[New Thread 0x7fffaffff6c0 (LWP 938710)]
+[New Thread 0x7fffaf66f6c0 (LWP 938711)]
+[New Thread 0x7fffaecdf6c0 (LWP 938712)]
+[New Thread 0x7fffae34f6c0 (LWP 938713)]
+Credits unavailable: Truncated DA bitstream
+COMPLETED=1
+COMPLETED=2
+COMPLETED=3
+COMPLETED=4
+COMPLETED=5
+COMPLETED=6
+COMPLETED=7
+COMPLETED=8
+COMPLETED=9
+COMPLETED=10
+COMPLETED=11
+COMPLETED=12
+COMPLETED=13
+COMPLETED=14
+COMPLETED=15
+COMPLETED=1
+COMPLETED=2
+COMPLETED=3
+COMPLETED=4
+COMPLETED=5
+Cannot load P06.PZ4: Invalid scene record size at 0x3efc; using original VGA asset
+Cannot load P06.PZ4: Invalid scene record size at 0x3efc; using original VGA asset
+COMPLETED=6
+COMPLETED=7
+COMPLETED=8
+COMPLETED=9
+COMPLETED=10
+COMPLETED=11
+COMPLETED=12
+COMPLETED=13
+COMPLETED=14
+COMPLETED=15

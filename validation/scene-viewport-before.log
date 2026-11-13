@@ -1,0 +1,24 @@
+   Compiling mickeys-jigsaw-puzzles v0.1.0 (/home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.64s
+     Running unittests src/main.rs (target/debug/deps/mickeys_jigsaw_puzzles-491c5df3117d1a37)
+
+running 1 test
+test graphics::tests::scene_background_respects_the_viewport ... FAILED
+
+failures:
+
+---- graphics::tests::scene_background_respects_the_viewport stdout ----
+
+thread 'graphics::tests::scene_background_respects_the_viewport' (665095) panicked at src/graphics.rs:779:17:
+assertion `left == right` failed: 0,0
+  left: 5
+ right: 99
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    graphics::tests::scene_background_respects_the_viewport
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 67 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--bin mickeys-jigsaw-puzzles`

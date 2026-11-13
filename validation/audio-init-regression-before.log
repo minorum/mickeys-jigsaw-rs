@@ -1,0 +1,22 @@
+   Compiling mickeys-jigsaw-puzzles v0.1.0 (/home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.02s
+     Running unittests src/main.rs (target/debug/deps/mickeys_jigsaw_puzzles-491c5df3117d1a37)
+
+running 1 test
+test audio::tests::disabled_audio_does_not_open_a_device ... FAILED
+
+failures:
+
+---- audio::tests::disabled_audio_does_not_open_a_device stdout ----
+
+thread 'audio::tests::disabled_audio_does_not_open_a_device' (432144) panicked at src/audio.rs:190:9:
+assertion failed: engine._stream.is_none()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    audio::tests::disabled_audio_does_not_open_a_device
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.10s
+
+error: test failed, to rerun pass `--bin mickeys-jigsaw-puzzles`

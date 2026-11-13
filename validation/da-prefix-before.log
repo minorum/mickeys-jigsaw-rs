@@ -1,0 +1,22 @@
+   Compiling mickeys-jigsaw-puzzles v0.1.0 (/home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.86s
+     Running unittests src/main.rs (target/debug/deps/mickeys_jigsaw_puzzles-491c5df3117d1a37)
+
+running 1 test
+test decompress::tests::invalid_da_prefix_codes_do_not_create_zero_bytes ... FAILED
+
+failures:
+
+---- decompress::tests::invalid_da_prefix_codes_do_not_create_zero_bytes stdout ----
+
+thread 'decompress::tests::invalid_da_prefix_codes_do_not_create_zero_bytes' (799930) panicked at src/decompress.rs:446:13:
+literal: Ok([0])
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    decompress::tests::invalid_da_prefix_codes_do_not_create_zero_bytes
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 85 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--bin mickeys-jigsaw-puzzles`

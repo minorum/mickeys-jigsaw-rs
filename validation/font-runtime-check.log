@@ -1,0 +1,3 @@
+Common events and invalid-placement buzz reached through actual input
+{'bytes': 2111292, 'rate': 48000, 'channels': 2, 'format': 'S16_LE', 'seconds': 10.9963125, 'nonzero_samples': 377854, 'peak': 24384, 'game_alive_after_inputs': True}
+Isolated error window: 0.9813333333333333 seconds; peak 3200 nonzero 7616

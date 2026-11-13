@@ -1,0 +1,3 @@
+vga P05 projector: mixed 1006 old / 368 new changed pixels; both targets reached; skip and natural completion returned to idle
+ega P05 projector: mixed 824 old / 251 new changed pixels; both targets reached; skip and natural completion returned to idle
+Both live P05 dissolves preserve source pixels and remain skippable

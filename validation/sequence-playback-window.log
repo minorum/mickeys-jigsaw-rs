@@ -1,0 +1,5 @@
+vga P02: 24 exact frames; elapsed=2.531s expected=2.527s; finished, restarted and skipped
+vga P11: 6 exact frames; elapsed=3.524s expected=3.515s; finished, restarted and skipped
+ega P02: 24 exact frames; elapsed=2.543s expected=2.527s; finished, restarted and skipped
+ega P11: 6 exact frames; elapsed=3.527s expected=3.515s; finished, restarted and skipped
+Four real-window animation runs: native repetitions and speeds, restart and skip verified

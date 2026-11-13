@@ -1,0 +1,24 @@
+   Compiling mickeys-jigsaw-puzzles v0.1.0 (/home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.63s
+     Running unittests src/main.rs (target/debug/deps/mickeys_jigsaw_puzzles-491c5df3117d1a37)
+
+running 1 test
+test audio::tests::iss_uses_original_playback_timing ... FAILED
+
+failures:
+
+---- audio::tests::iss_uses_original_playback_timing stdout ----
+
+thread 'audio::tests::iss_uses_original_playback_timing' (466504) panicked at src/audio.rs:549:13:
+assertion `left == right` failed: SOUND0
+  left: 12136
+ right: 2139
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    audio::tests::iss_uses_original_playback_timing
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--bin mickeys-jigsaw-puzzles`

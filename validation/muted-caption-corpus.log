@@ -1,0 +1,11 @@
+   Compiling mickeys-jigsaw-puzzles v0.1.0 (/home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.58s
+     Running unittests src/main.rs (target/debug/deps/mickeys_jigsaw_puzzles-491c5df3117d1a37)
+
+running 1 test
+Cannot load P06.PZ4: Invalid scene record size at 0x3efc; using original VGA asset
+2 music/speech entries retain captions with both channels muted
+test puzzle::tests::speech_captions_survive_muting_both_audio_options ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 64 filtered out; finished in 0.37s
+

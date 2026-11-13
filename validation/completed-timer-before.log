@@ -1,0 +1,24 @@
+   Compiling mickeys-jigsaw-puzzles v0.1.0 (/home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.85s
+     Running unittests src/main.rs (target/debug/deps/mickeys_jigsaw_puzzles-491c5df3117d1a37)
+
+running 1 test
+test tests::completed_picture_is_unchanged_by_timer_setting ... FAILED
+
+failures:
+
+---- tests::completed_picture_is_unchanged_by_timer_setting stdout ----
+
+thread 'tests::completed_picture_is_unchanged_by_timer_setting' (951454) panicked at src/main.rs:1023:13:
+assertion `left == right` failed: ega=false: timer altered completed artwork
+  left: 326
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::completed_picture_is_unchanged_by_timer_setting
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 99 filtered out; finished in 0.04s
+
+error: test failed, to rerun pass `--bin mickeys-jigsaw-puzzles`

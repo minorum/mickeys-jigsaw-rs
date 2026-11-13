@@ -1,0 +1,24 @@
+   Compiling mickeys-jigsaw-puzzles v0.1.0 (/home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.71s
+     Running unittests src/main.rs (target/debug/deps/mickeys_jigsaw_puzzles-491c5df3117d1a37)
+
+running 1 test
+test graphics::tests::scene_background_preserves_both_pattern_colors ... FAILED
+
+failures:
+
+---- graphics::tests::scene_background_preserves_both_pattern_colors stdout ----
+
+thread 'graphics::tests::scene_background_preserves_both_pattern_colors' (869174) panicked at src/graphics.rs:1059:21:
+assertion `left == right` failed: ega=false 52,41
+  left: 4
+ right: 2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    graphics::tests::scene_background_preserves_both_pattern_colors
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 95 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `--bin mickeys-jigsaw-puzzles`

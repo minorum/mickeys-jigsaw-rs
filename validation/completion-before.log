@@ -1,0 +1,8 @@
+Completed puzzle 1 returned to unchanged browser: True
+Completed puzzle 2 returned to unchanged browser: True
+Completed puzzle 3 returned to unchanged browser: False
+Traceback (most recent call last):
+  File "/tmp/mickey-completion-runtime.py", line 18, in <module>
+    assert pixels==expected,number
+           ^^^^^^^^^^^^^^^^
+AssertionError: 3

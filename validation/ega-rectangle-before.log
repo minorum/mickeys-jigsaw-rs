@@ -1,0 +1,25 @@
+   Compiling mickeys-jigsaw-puzzles v0.1.0 (/home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.76s
+     Running unittests src/main.rs (target/debug/deps/mickeys_jigsaw_puzzles-491c5df3117d1a37)
+
+running 1 test
+test graphics::tests::ega_rectangle_pattern_matches_original_driver ... FAILED
+
+failures:
+
+---- graphics::tests::ega_rectangle_pattern_matches_original_driver stdout ----
+Cannot load P06.PZ4: Invalid scene record size at 0x3efc; using original VGA asset
+
+thread 'graphics::tests::ega_rectangle_pattern_matches_original_driver' (624338) panicked at src/graphics.rs:779:13:
+assertion `left == right` failed: 4	5	9
+  left: 14
+ right: 9
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    graphics::tests::ega_rectangle_pattern_matches_original_driver
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 62 filtered out; finished in 0.11s
+
+error: test failed, to rerun pass `--bin mickeys-jigsaw-puzzles`

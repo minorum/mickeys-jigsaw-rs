@@ -1,0 +1,14 @@
+Masked-write model calibrated against known pixels in all four orientations
+scene-P01.PZ4.raw: 182 display frames rendered
+scene-P02.PZ4.raw: 262 display frames rendered
+scene-P03.PZ4.raw: 180 display frames rendered
+scene-P04.PZ4.raw: 200 display frames rendered
+scene-P05.PZ4.raw: 173 display frames rendered
+scene-P08.PZ4.raw: 190 display frames rendered
+scene-P09.PZ4.raw: 128 display frames rendered
+scene-P11.PZ4.raw: 158 display frames rendered
+scene-P12.PZ4.raw: 285 display frames rendered
+scene-P13.PZ4.raw: 132 display frames rendered
+scene-P14.PZ4.raw: 352 display frames rendered
+scene-P15.PZ4.raw: 265 display frames rendered
+2507 native EGA scene framebuffer hashes

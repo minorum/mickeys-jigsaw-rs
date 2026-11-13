@@ -1,0 +1,3 @@
+One initial game; two live visual rebuilds
+Placed piece changed to EGA and returned pixel-exactly to VGA
+GUI_LIVE_VIDEO_ASSERTIONS=PASS

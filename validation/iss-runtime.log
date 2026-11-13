@@ -1,0 +1,5 @@
+libEGL warning: DRI3 error: Could not get DRI3 device
+libEGL warning: Ensure your X server supports DRI3 to get accelerated rendering
+Credits unavailable: Truncated DA bitstream
+Cannot load P06.PZ4: Invalid scene record size at 0x3efc; using original VGA asset
+Cannot load P06.PZ4: Invalid scene record size at 0x3efc; using original VGA asset

@@ -1,0 +1,33 @@
+   Compiling mickeys-jigsaw-puzzles v0.1.0 (/home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN)
+warning: unused variable: `limit`
+  --> src/audio.rs:93:58
+   |
+93 | fn decode_nnv_frame(bank: &[u8], start: usize, mode: u8, limit: usize) -> Result<(Vec<u8>, usize), &'static str> {
+   |                                                          ^^^^^ help: if this is intentional, prefix it with an underscore: `_limit`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `mickeys-jigsaw-puzzles` (bin "mickeys-jigsaw-puzzles" test) generated 1 warning (run `cargo fix --bin "mickeys-jigsaw-puzzles" -p mickeys-jigsaw-puzzles --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.06s
+     Running unittests src/main.rs (target/debug/deps/mickeys_jigsaw_puzzles-491c5df3117d1a37)
+
+running 1 test
+test audio::tests::nnv_rejects_truncated_commands_and_unbounded_output ... FAILED
+
+failures:
+
+---- audio::tests::nnv_rejects_truncated_commands_and_unbounded_output stdout ----
+
+thread 'audio::tests::nnv_rejects_truncated_commands_and_unbounded_output' (456680) panicked at src/audio.rs:553:9:
+assertion `left == right` failed
+  left: Ok(([128, 128, 128, 128], 5))
+ right: Err("NNV phrase exceeds two minutes")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    audio::tests::nnv_rejects_truncated_commands_and_unbounded_output
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 24 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--bin mickeys-jigsaw-puzzles`

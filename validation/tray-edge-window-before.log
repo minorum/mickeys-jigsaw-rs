@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN/validation/tray_edge_gameplay.py", line 92, in <module>
+    assert actual == expected, (mode, dim, actual, expected)
+           ^^^^^^^^^^^^^^^^^^
+AssertionError: ('vga', 6, [], [1])
