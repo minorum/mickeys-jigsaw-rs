@@ -602,15 +602,8 @@ pub fn compute_frame_bounds(
     flags: u16,
     depth: usize,
 ) -> (i32, i32, i32, i32) {
-    let mut min_x = i32::MAX;
-    let mut min_y = i32::MAX;
-    let mut max_x = i32::MIN;
-    let mut max_y = i32::MIN;
-
-    accumulate_frame_bounds(
-        puzzle, frame_idx, origin_x, origin_y, flags, &mut min_x, &mut min_y, &mut max_x,
-        &mut max_y, depth,
-    );
+    let (min_x, min_y, max_x, max_y) =
+        accumulate_frame_bounds(puzzle, frame_idx, origin_x, origin_y, flags, depth);
 
     if min_x == i32::MAX || max_x < min_x {
         (
@@ -657,24 +650,37 @@ fn combine_frame_flags(parent_flags: u16, cmd_flags: u16) -> u16 {
     ((parent_flags ^ local_c) & 3) | (local_c & 0xFFF0)
 }
 
-#[expect(clippy::too_many_arguments)]
-fn accumulate_frame_bounds(
-    puzzle: &PuzzleAsset,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FrameTraversalPolicy {
+    /// Used by bounds calculation and hit-testing: visits all sub-frames and propagates only flip bits.
+    Geometry,
+    /// Used by scene rendering: skips top-level `0x0030` sub-frames and propagates high command flags.
+    Render,
+}
+
+#[derive(Clone, Copy)]
+struct FrameWalkState {
     frame_idx: usize,
     ox: i32,
     oy: i32,
     flags: u16,
-    min_x: &mut i32,
-    min_y: &mut i32,
-    max_x: &mut i32,
-    max_y: &mut i32,
     depth: usize,
-) {
-    if depth > 16 {
-        return;
+}
+
+fn visit_frame_commands<F>(
+    puzzle: &PuzzleAsset,
+    state: FrameWalkState,
+    policy: FrameTraversalPolicy,
+    visitor: &mut F,
+) -> std::ops::ControlFlow<()>
+where
+    F: FnMut(&FrameCommand, i32, i32, u16) -> std::ops::ControlFlow<()>,
+{
+    if state.depth > 16 {
+        return std::ops::ControlFlow::Continue(());
     }
-    let Some(SceneRecord::Frame { commands, .. }) = puzzle.records.get(frame_idx) else {
-        return;
+    let Some(SceneRecord::Frame { commands, .. }) = puzzle.records.get(state.frame_idx) else {
+        return std::ops::ControlFlow::Continue(());
     };
 
     for cmd in commands {
@@ -685,54 +691,93 @@ fn accumulate_frame_bounds(
                 frame_idx: child_idx,
                 flags: child_flags,
             } => {
-                let (lx, ly) = reflect_subframe_origin(puzzle, child_idx, dx, dy, flags, depth);
-                let combined_flags = (flags ^ child_flags) & 3;
-                accumulate_frame_bounds(
-                    puzzle,
-                    child_idx,
-                    ox + lx,
-                    oy + ly,
-                    combined_flags,
-                    min_x,
-                    min_y,
-                    max_x,
-                    max_y,
-                    depth + 1,
-                );
-            }
-            FrameCommand::Rect {
-                x,
-                y,
-                width,
-                height,
-                ..
-            } => {
-                let px = ox + (x as i32);
-                let py = oy + (y as i32);
-                let pw = width as i32;
-                let ph = height as i32;
-                *min_x = (*min_x).min(px);
-                *min_y = (*min_y).min(py);
-                *max_x = (*max_x).max(px + pw);
-                *max_y = (*max_y).max(py + ph);
-            }
-            FrameCommand::Sprite {
-                x, y, sprite_idx, ..
-            } => {
-                if let Some(spr) = puzzle.sprites.get(sprite_idx) {
-                    let px = ox + (x as i32);
-                    let py = oy + (y as i32);
-                    let pw = spr.width as i32;
-                    let ph = spr.sub_h as i32;
-                    *min_x = (*min_x).min(px);
-                    *min_y = (*min_y).min(py);
-                    *max_x = (*max_x).max(px + pw);
-                    *max_y = (*max_y).max(py + ph);
+                // In top-level frame (`FUN_196c_17a3` line 1301), skip sub-frames with `(flags & 0xF0) == 0x30`
+                if policy == FrameTraversalPolicy::Render
+                    && state.depth == 0
+                    && (child_flags & 0x00F0) == 0x0030
+                {
+                    continue;
                 }
+                let (lx, ly) =
+                    reflect_subframe_origin(puzzle, child_idx, dx, dy, state.flags, state.depth);
+                let combined_flags = match policy {
+                    FrameTraversalPolicy::Render => combine_frame_flags(state.flags, child_flags),
+                    FrameTraversalPolicy::Geometry => (state.flags ^ child_flags) & 3,
+                };
+                visit_frame_commands(
+                    puzzle,
+                    FrameWalkState {
+                        frame_idx: child_idx,
+                        ox: state.ox + lx,
+                        oy: state.oy + ly,
+                        flags: combined_flags,
+                        depth: state.depth + 1,
+                    },
+                    policy,
+                    visitor,
+                )?;
             }
-            _ => {}
+            _ => visitor(cmd, state.ox, state.oy, state.flags)?,
         }
     }
+    std::ops::ControlFlow::Continue(())
+}
+
+fn accumulate_frame_bounds(
+    puzzle: &PuzzleAsset,
+    frame_idx: usize,
+    ox: i32,
+    oy: i32,
+    flags: u16,
+    depth: usize,
+) -> (i32, i32, i32, i32) {
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+    let _ = visit_frame_commands(
+        puzzle,
+        FrameWalkState {
+            frame_idx,
+            ox,
+            oy,
+            flags,
+            depth,
+        },
+        FrameTraversalPolicy::Geometry,
+        &mut |cmd, cur_ox, cur_oy, _| {
+            let rect = match *cmd {
+                FrameCommand::Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                    ..
+                } => Some((
+                    cur_ox + x as i32,
+                    cur_oy + y as i32,
+                    width as i32,
+                    height as i32,
+                )),
+                FrameCommand::Sprite {
+                    x, y, sprite_idx, ..
+                } => puzzle.sprites.get(sprite_idx).map(|spr| {
+                    (
+                        cur_ox + x as i32,
+                        cur_oy + y as i32,
+                        spr.width as i32,
+                        spr.sub_h as i32,
+                    )
+                }),
+                _ => None,
+            };
+            if let Some((px, py, pw, ph)) = rect {
+                min_x = min_x.min(px);
+                min_y = min_y.min(py);
+                max_x = max_x.max(px + pw);
+                max_y = max_y.max(py + ph);
+            }
+            std::ops::ControlFlow::Continue(())
+        },
+    );
+    (min_x, min_y, max_x, max_y)
 }
 
 /// Renders a `0x7ff1` scene/animation frame (`FUN_196c_14f0` & `FUN_196c_17a3`).
@@ -755,7 +800,7 @@ pub fn render_scene_frame(
     let Some(SceneRecord::Frame {
         bg_frame_idx,
         bg_color,
-        commands,
+        ..
     }) = puzzle.records.get(frame_idx)
     else {
         return;
@@ -769,74 +814,62 @@ pub fn render_scene_frame(
         }
     }
 
-    for cmd in commands {
-        match *cmd {
-            FrameCommand::SubFrame {
-                dx,
-                dy,
-                frame_idx: child_idx,
-                flags: child_flags,
-            } => {
-                // In top-level frame (`FUN_196c_17a3` line 1301), skip sub-frames with `(flags & 0xF0) == 0x30`
-                if depth == 0 && (child_flags & 0x00F0) == 0x0030 {
-                    continue;
-                }
-                let (lx, ly) = reflect_subframe_origin(puzzle, child_idx, dx, dy, flags, depth);
-                let combined_flags = combine_frame_flags(flags, child_flags);
-                render_scene_frame(
-                    fb,
-                    puzzle,
-                    child_idx,
-                    ox + lx,
-                    oy + ly,
-                    combined_flags,
-                    false,
-                    x_shift,
-                    depth + 1,
-                );
-            }
-            FrameCommand::Rect {
-                x,
-                y,
-                color,
-                flags: cmd_flags,
-                width,
-                height,
-            } => {
-                let u6 = combine_frame_flags(flags, cmd_flags);
-                let pattern = if ((u6 >> 4) & 0x0F) == 2 {
-                    let solid = (u6 >> 8) & if puzzle.uses_ega() { 15 } else { 255 };
-                    if color & 0xff00 == 0 {
-                        solid
-                    } else if color & 255 == 0 {
-                        solid << 8
+    let _ = visit_frame_commands(
+        puzzle,
+        FrameWalkState {
+            frame_idx,
+            ox,
+            oy,
+            flags,
+            depth,
+        },
+        FrameTraversalPolicy::Render,
+        &mut |cmd, cur_ox, cur_oy, cur_flags| {
+            match *cmd {
+                FrameCommand::Rect {
+                    x,
+                    y,
+                    color,
+                    flags: cmd_flags,
+                    width,
+                    height,
+                } => {
+                    let u6 = combine_frame_flags(cur_flags, cmd_flags);
+                    let pattern = if ((u6 >> 4) & 0x0F) == 2 {
+                        let solid = (u6 >> 8) & if puzzle.uses_ega() { 15 } else { 255 };
+                        if color & 0xff00 == 0 {
+                            solid
+                        } else if color & 255 == 0 {
+                            solid << 8
+                        } else {
+                            solid | (solid << 8)
+                        }
                     } else {
-                        solid | (solid << 8)
+                        color
+                    };
+                    let (px, py) = (cur_ox + x as i32 + x_shift, cur_oy + y as i32);
+                    if puzzle.uses_ega() {
+                        fb.fill_pattern_rect(px, py, width as i32, height as i32, pattern);
+                    } else {
+                        fb.fill_rect(px, py, width as i32, height as i32, pattern as u8);
                     }
-                } else {
-                    color
-                };
-                let (px, py) = (ox + x as i32 + x_shift, oy + y as i32);
-                if puzzle.uses_ega() {
-                    fb.fill_pattern_rect(px, py, width as i32, height as i32, pattern);
-                } else {
-                    fb.fill_rect(px, py, width as i32, height as i32, pattern as u8);
                 }
-            }
-            FrameCommand::Sprite {
-                x,
-                y,
-                sprite_idx,
-                flags: cmd_flags,
-            } => {
-                if let Some(spr) = puzzle.sprites.get(sprite_idx) {
-                    let u6 = combine_frame_flags(flags, cmd_flags);
-                    fb.blit_sprite(spr, ox + (x as i32) + x_shift, oy + (y as i32), u6);
+                FrameCommand::Sprite {
+                    x,
+                    y,
+                    sprite_idx,
+                    flags: cmd_flags,
+                } => {
+                    if let Some(spr) = puzzle.sprites.get(sprite_idx) {
+                        let u6 = combine_frame_flags(cur_flags, cmd_flags);
+                        fb.blit_sprite(spr, cur_ox + (x as i32) + x_shift, cur_oy + (y as i32), u6);
+                    }
                 }
+                _ => {}
             }
-            _ => {}
-        }
-    }
+            std::ops::ControlFlow::Continue(())
+        },
+    );
 }
 
 /// Checks if a point `(test_x, test_y)` hits any non-transparent pixel in `frame_idx` (`FUN_2202_03fc`).
@@ -851,88 +884,71 @@ pub fn hit_test_frame(
     test_y: i32,
     depth: usize,
 ) -> bool {
-    if depth > 16 {
-        return false;
-    }
-    let Some(SceneRecord::Frame { commands, .. }) = puzzle.records.get(frame_idx) else {
-        return false;
-    };
-    for cmd in commands {
-        match *cmd {
-            FrameCommand::SubFrame {
-                dx,
-                dy,
-                frame_idx: child_idx,
-                flags: child_flags,
-            } => {
-                let (lx, ly) = reflect_subframe_origin(puzzle, child_idx, dx, dy, flags, depth);
-                let u5 = (flags ^ child_flags) & 3;
-                if hit_test_frame(
-                    puzzle,
-                    child_idx,
-                    ox + lx,
-                    oy + ly,
-                    u5,
-                    test_x,
-                    test_y,
-                    depth + 1,
-                ) {
-                    return true;
+    visit_frame_commands(
+        puzzle,
+        FrameWalkState {
+            frame_idx,
+            ox,
+            oy,
+            flags,
+            depth,
+        },
+        FrameTraversalPolicy::Geometry,
+        &mut |cmd, cur_ox, cur_oy, cur_flags| {
+            let hit = match *cmd {
+                FrameCommand::Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                    ..
+                } => {
+                    let rx = cur_ox + (x as i32);
+                    let ry = cur_oy + (y as i32);
+                    test_x >= rx
+                        && test_x < rx + (width as i32)
+                        && test_y >= ry
+                        && test_y < ry + (height as i32)
                 }
-            }
-            FrameCommand::Rect {
-                x,
-                y,
-                width,
-                height,
-                ..
-            } => {
-                let rx = ox + (x as i32);
-                let ry = oy + (y as i32);
-                if test_x >= rx
-                    && test_x < rx + (width as i32)
-                    && test_y >= ry
-                    && test_y < ry + (height as i32)
-                {
-                    return true;
-                }
-            }
-            FrameCommand::Sprite {
-                x,
-                y,
-                sprite_idx,
-                flags: cmd_flags,
-            } => {
-                if let Some(spr) = puzzle.sprites.get(sprite_idx) {
-                    let sx0 = ox + (x as i32);
-                    let sy0 = oy + (y as i32);
+                FrameCommand::Sprite {
+                    x,
+                    y,
+                    sprite_idx,
+                    flags: cmd_flags,
+                } => puzzle.sprites.get(sprite_idx).is_some_and(|spr| {
+                    let sx0 = cur_ox + (x as i32);
+                    let sy0 = cur_oy + (y as i32);
                     let w = spr.width as i32;
                     let h = spr.sub_h as i32;
-                    if test_x >= sx0 && test_x < sx0 + w && test_y >= sy0 && test_y < sy0 + h {
-                        let u5 = (flags ^ cmd_flags) & 3;
-                        let dx = test_x - sx0;
-                        let dy = test_y - sy0;
-                        let px = if (u5 & 1) != 0 {
-                            (spr.sub_x as i32) + (w - 1 - dx)
-                        } else {
-                            (spr.sub_x as i32) + dx
-                        };
-                        let py = if (u5 & 2) != 0 {
-                            (spr.sub_y as i32) + (h - 1 - dy)
-                        } else {
-                            (spr.sub_y as i32) + dy
-                        };
-                        let idx = (py as usize) * (spr.stride as usize) + (px as usize);
-                        if spr.is_opaque(idx) {
-                            return true;
-                        }
+                    if test_x < sx0 || test_x >= sx0 + w || test_y < sy0 || test_y >= sy0 + h {
+                        return false;
                     }
-                }
+                    let u5 = (cur_flags ^ cmd_flags) & 3;
+                    let dx = test_x - sx0;
+                    let dy = test_y - sy0;
+                    let px = if (u5 & 1) != 0 {
+                        (spr.sub_x as i32) + (w - 1 - dx)
+                    } else {
+                        (spr.sub_x as i32) + dx
+                    };
+                    let py = if (u5 & 2) != 0 {
+                        (spr.sub_y as i32) + (h - 1 - dy)
+                    } else {
+                        (spr.sub_y as i32) + dy
+                    };
+                    let idx = (py as usize) * (spr.stride as usize) + (px as usize);
+                    spr.is_opaque(idx)
+                }),
+                _ => false,
+            };
+            if hit {
+                std::ops::ControlFlow::Break(())
+            } else {
+                std::ops::ControlFlow::Continue(())
             }
-            _ => {}
-        }
-    }
-    false
+        },
+    )
+    .is_break()
 }
 
 pub fn dissolve_order(ega: bool) -> &'static [u16] {
@@ -1347,10 +1363,10 @@ mod tests {
             panic!("P11 frame");
         };
         for command in commands {
-            if let FrameCommand::Rect { color, .. } = command {
-                if *color == 0x090e {
-                    *color = 0x0e0e;
-                }
+            if let FrameCommand::Rect { color, .. } = command
+                && *color == 0x090e
+            {
+                *color = 0x0e0e;
             }
         }
         let mut flattened = Framebuffer::new();
@@ -1605,5 +1621,81 @@ mod tests {
 
         fb.fill_polygon_offset(&[(-20, -30), (20, -30), (0, -5)], 0, 0, 5);
         assert!(fb.pixels.iter().all(|&p| p == 0));
+    }
+
+    #[test]
+    fn traversal_policy_distinguishes_render_and_geometry_flags() {
+        use crate::assets::{FrameCommand, PuzzleAsset, SceneRecord};
+
+        let asset = PuzzleAsset {
+            id: 0,
+            palette: [[0; 3]; 256],
+            records: vec![
+                // Record 0: top-level frame with a `0x0030` sub-frame and a `0x0720` sub-frame
+                SceneRecord::Frame {
+                    bg_frame_idx: 0,
+                    bg_color: 0,
+                    commands: vec![
+                        FrameCommand::SubFrame {
+                            dx: 0,
+                            dy: 0,
+                            frame_idx: 1,
+                            flags: 0x0030,
+                        },
+                        FrameCommand::SubFrame {
+                            dx: 0,
+                            dy: 0,
+                            frame_idx: 2,
+                            flags: 0x0720,
+                        },
+                    ],
+                },
+                // Record 1: skipped by Render at depth 0, but included by Geometry
+                SceneRecord::Frame {
+                    bg_frame_idx: 0,
+                    bg_color: 0,
+                    commands: vec![FrameCommand::Rect {
+                        x: 10,
+                        y: 10,
+                        color: 9,
+                        flags: 0,
+                        width: 4,
+                        height: 4,
+                    }],
+                },
+                // Record 2: high flags `0x0720` override rect color to `7` during Render
+                SceneRecord::Frame {
+                    bg_frame_idx: 0,
+                    bg_color: 0,
+                    commands: vec![FrameCommand::Rect {
+                        x: 20,
+                        y: 20,
+                        color: 0x0303,
+                        flags: 0,
+                        width: 4,
+                        height: 4,
+                    }],
+                },
+            ],
+            sequences: Vec::new(),
+            hotspots: Vec::new(),
+            full_anim_seq_idx: 0,
+            sounds: Vec::new(),
+            sprites: Vec::new(),
+        };
+
+        // Geometry includes both the `0x0030` sub-frame at (10,10) and the `0x0720` sub-frame at (20,20)
+        assert_eq!(
+            compute_frame_bounds(&asset, 0, 0, 0, 0, 0),
+            (10, 10, 14, 14)
+        );
+        assert!(hit_test_frame(&asset, 0, 0, 0, 0, 11, 11, 0));
+        assert!(hit_test_frame(&asset, 0, 0, 0, 0, 21, 21, 0));
+
+        // Render skips the `0x0030` sub-frame at depth 0 and propagates `0x0720` color override (`7`)
+        let mut fb = Framebuffer::new();
+        render_scene_frame(&mut fb, &asset, 0, 0, 0, 0, false, 0, 0);
+        assert_eq!(fb.get_pixel(11, 11), 0);
+        assert_eq!(fb.get_pixel(21, 21), 7);
     }
 }
