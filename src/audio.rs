@@ -568,6 +568,8 @@ pub struct AudioEngine {
     stream_handle: Option<OutputStreamHandle>,
     sfx_sinks: Vec<Sink>,
     common_caption: Option<(CommonSound, f32)>,
+    common_caption_rev: Option<u64>,
+    next_caption_rev: u64,
     music_sink: Option<Sink>,
     pub music_enabled: bool,
     pub sfx_enabled: bool,
@@ -636,6 +638,8 @@ impl AudioEngine {
             stream_handle: None,
             sfx_sinks: Vec::new(),
             common_caption: None,
+            common_caption_rev: None,
+            next_caption_rev: 0,
             music_sink: None,
             music_enabled,
             sfx_enabled,
@@ -675,6 +679,8 @@ impl AudioEngine {
             .max(event.caption().len() as f32 / 25.0)
             .max(2.0);
         self.common_caption = Some((event, duration));
+        self.next_caption_rev = self.next_caption_rev.wrapping_add(1);
+        self.common_caption_rev = Some(self.next_caption_rev);
         if self.sfx_enabled {
             self.play_effect(samples, NNV_SAMPLE_RATE);
         }
@@ -686,11 +692,17 @@ impl AudioEngine {
             .map(|(event, _)| event.caption())
     }
 
+    /// Returns a revision token for the currently displayed common caption, or `None` when idle.
+    pub fn caption_key(&self) -> Option<u64> {
+        self.common_caption_rev
+    }
+
     pub fn update(&mut self, dt: f32) {
         if let Some((_, remaining)) = self.common_caption.as_mut() {
             *remaining -= dt.max(0.0);
             if *remaining <= 0.0 {
                 self.common_caption = None;
+                self.common_caption_rev = None;
             }
         }
     }
@@ -746,6 +758,7 @@ impl AudioEngine {
 
     pub fn stop_all(&mut self) {
         self.common_caption = None;
+        self.common_caption_rev = None;
         self.sfx_sinks.clear();
         if let Some(m) = self.music_sink.take() {
             m.stop();
@@ -793,6 +806,10 @@ mod tests {
     use super::*;
     use rodio::buffer::SamplesBuffer;
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn common_feedback_lifecycle_matches_original_muting_and_replacement() {
         for event in [
@@ -842,6 +859,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn setup_pause_preserves_both_audio_channels() {
         let mut audio = AudioEngine::new(Path::new(env!("CARGO_MANIFEST_DIR")), false, false);
@@ -866,6 +887,10 @@ mod tests {
         assert!(audio.music_sink.is_none());
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn common_captions_match_source_and_work_without_audio() {
         let mut engine = AudioEngine::new(Path::new(env!("CARGO_MANIFEST_DIR")), false, false);
@@ -897,6 +922,10 @@ mod tests {
         assert!(engine._stream.is_none());
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn ess_resources_keep_original_identity_without_guessed_aliases() {
         let engine = AudioEngine::new(Path::new(env!("CARGO_MANIFEST_DIR")), false, false);
@@ -908,6 +937,10 @@ mod tests {
         assert!(engine.nnv_banks.contains_key("DATA_8"));
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn common_feedback_matches_original_event_table() {
         let engine = AudioEngine::new(Path::new(env!("CARGO_MANIFEST_DIR")), false, false);
@@ -950,6 +983,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn error_buzz_is_bounded_and_respects_muting() {
         let samples = error_buzz_samples();
@@ -967,6 +1004,10 @@ mod tests {
         assert!(engine.sfx_sinks.is_empty());
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn scene_wait_does_not_overlap_busy_audio_or_trap_a_loop() {
         use crate::assets::{FrameCommand, PuzzleAsset, SceneRecord};
@@ -1015,6 +1056,10 @@ mod tests {
         assert!(!audio.is_playing());
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn disabled_audio_does_not_open_a_device() {
         let engine = AudioEngine::new(Path::new(env!("CARGO_MANIFEST_DIR")), false, false);
@@ -1022,6 +1067,10 @@ mod tests {
         assert!(engine.stream_handle.is_none());
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn iss_uses_original_playback_timing() {
         let engine = AudioEngine::new(Path::new(env!("CARGO_MANIFEST_DIR")), false, false);
@@ -1032,6 +1081,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn iss_matches_original_speaker_control() {
         let engine = AudioEngine::new(Path::new(env!("CARGO_MANIFEST_DIR")), false, false);
@@ -1075,6 +1128,10 @@ mod tests {
         assert_eq!(iss_speaker_ticks(&long), Err("ISS song exceeds one minute"));
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn nnv_matches_original_machine_code() {
         let engine = AudioEngine::new(Path::new(env!("CARGO_MANIFEST_DIR")), false, false);
@@ -1126,6 +1183,10 @@ mod tests {
         assert!(decode_nnv_phrase(&header, 1).is_err());
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn nnv_decode_cache_returns_identical_samples() {
         let mut engine = AudioEngine::new(Path::new(env!("CARGO_MANIFEST_DIR")), false, false);

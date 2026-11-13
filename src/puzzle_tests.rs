@@ -1,6 +1,12 @@
 use super::*;
+use crate::assets::{FontAsset, ToolboxAsset};
 use crate::graphics::render_scene_view;
+use crate::puzzle_render::PuzzleRenderer;
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn tray_bottom_padding_selects_the_last_visible_piece() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -53,6 +59,10 @@ fn tray_bottom_padding_selects_the_last_visible_piece() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn projector_dissolve_starts_from_the_presented_picture() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -77,9 +87,10 @@ fn projector_dissolve_starts_from_the_presented_picture() {
             &session.asset,
             session.asset.sequences[1].start_frame,
         );
+        let mut renderer = PuzzleRenderer::new();
         session.start_sequence(playback, &mut audio);
         let mut actual = Framebuffer::new();
-        session.render(&mut actual, &toolbox, &font, 0, 0);
+        renderer.render(&session, &mut actual, &toolbox, &font, 0, 0);
         for y in 2..198 {
             for x in 25..295 {
                 assert_eq!(
@@ -97,7 +108,7 @@ fn projector_dissolve_starts_from_the_presented_picture() {
         let mut next = Framebuffer::new();
         render_scene_view(&mut next, &session.asset, frame);
         session.update(duration / 2.0, &mut audio);
-        session.render(&mut actual, &toolbox, &font, 0, 0);
+        renderer.render(&session, &mut actual, &toolbox, &font, 0, 0);
         let mut revealed = vec![false; 64000];
         for &pixel in crate::graphics::dissolve_order(ega).iter().take(32000) {
             revealed[pixel as usize] = true;
@@ -121,7 +132,7 @@ fn projector_dissolve_starts_from_the_presented_picture() {
         }
         assert!(old_pixels > 0 && new_pixels > 0);
         session.update(duration / 2.0, &mut audio);
-        session.render(&mut actual, &toolbox, &font, 0, 0);
+        renderer.render(&session, &mut actual, &toolbox, &font, 0, 0);
         for y in 2..198 {
             for x in 25..295 {
                 assert_eq!(actual.get_pixel(x, y), next.get_pixel(x, y));
@@ -134,7 +145,7 @@ fn projector_dissolve_starts_from_the_presented_picture() {
         assert_eq!(anim.transition_mode, 8);
         let delay = anim.frame_delay_secs;
         session.update(delay * 0.75, &mut audio);
-        session.render(&mut actual, &toolbox, &font, 0, 0);
+        renderer.render(&session, &mut actual, &toolbox, &font, 0, 0);
         render_scene_view(&mut next, &session.asset, frame + 1);
         for y in 2..198 {
             for x in 25..295 {
@@ -150,6 +161,10 @@ fn projector_dissolve_starts_from_the_presented_picture() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn robot_hotspot_repeats_its_native_sequence() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -176,6 +191,10 @@ fn robot_hotspot_repeats_its_native_sequence() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn sequence_repetitions_and_delays_match_original_machine_code() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -237,6 +256,10 @@ fn sequence_repetitions_and_delays_match_original_machine_code() {
     assert_eq!(checked, 48);
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn original_preset_pieces_can_be_placed_in_both_video_modes() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -273,6 +296,10 @@ fn original_preset_pieces_can_be_placed_in_both_video_modes() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn preset_board_keeps_native_layers_and_viewport_clipping() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -283,6 +310,7 @@ fn preset_board_keeps_native_layers_and_viewport_clipping() {
             let toolbox =
                 ToolboxAsset::load(&dir.join("MJP.TBX"), usize::from(asset.uses_ega())).unwrap();
             let mut session = PuzzleSession::new(num, asset, 1, true, true, false);
+            let mut renderer = PuzzleRenderer::new();
             for phase in 0..8 {
                 session.toolbox_open = phase < 4;
                 let phase = phase % 4;
@@ -293,6 +321,7 @@ fn preset_board_keeps_native_layers_and_viewport_clipping() {
                     assert!(piece.base_x + piece.base_w <= PLAYFIELD_W);
                     assert!(piece.base_y + piece.base_h <= PLAYFIELD_H);
                 }
+                session.bump_board();
                 let mut expected_asset = session.asset.clone();
                 let frame_idx = session.asset.preset_frame_idx();
                 if let SceneRecord::Frame { commands, .. } = &mut expected_asset.records[frame_idx]
@@ -320,7 +349,7 @@ fn preset_board_keeps_native_layers_and_viewport_clipping() {
                     0,
                 );
                 let mut actual = Framebuffer::new();
-                session.render(&mut actual, &toolbox, &font, 0, 0);
+                renderer.render(&session, &mut actual, &toolbox, &font, 0, 0);
                 for y in 2..198 {
                     for x in 2..272 {
                         assert_eq!(
@@ -335,6 +364,10 @@ fn preset_board_keeps_native_layers_and_viewport_clipping() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn completed_picture_matches_the_assembled_board_pixels() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -349,11 +382,12 @@ fn completed_picture_matches_the_assembled_board_pixels() {
             for piece in &mut session.pieces {
                 piece.placed = true;
             }
+            let mut renderer = PuzzleRenderer::new();
             let mut board = Framebuffer::new();
-            session.render(&mut board, &toolbox, &font, 0, 0);
+            renderer.render(&session, &mut board, &toolbox, &font, 0, 0);
             session.solved = true;
             let mut picture = Framebuffer::new();
-            session.render(&mut picture, &toolbox, &font, 0, 0);
+            renderer.render(&session, &mut picture, &toolbox, &font, 0, 0);
             for y in 2..198 {
                 for x in 25..295 {
                     assert_eq!(
@@ -367,6 +401,10 @@ fn completed_picture_matches_the_assembled_board_pixels() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn grid_pieces_match_original_capture_rectangles_and_source_pixels() {
     let asset = PuzzleAsset::load(Path::new(env!("CARGO_MANIFEST_DIR")), 1, false).unwrap();
@@ -410,6 +448,10 @@ fn grid_pieces_match_original_capture_rectangles_and_source_pixels() {
     assert_eq!(checked, 203);
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn keyboard_pointer_can_complete_every_grid_and_yield_to_mouse() {
     fn move_to(session: &mut PuzzleSession, x: i32, y: i32) {
@@ -454,6 +496,10 @@ fn keyboard_pointer_can_complete_every_grid_and_yield_to_mouse() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn speech_captions_survive_muting_both_audio_options() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -519,6 +565,10 @@ fn speech_captions_survive_muting_both_audio_options() {
     println!("{checked} music/speech entries retain captions with both channels muted");
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn tray_toggle_cancels_drag_without_losing_held_piece() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -546,6 +596,10 @@ fn tray_toggle_cancels_drag_without_losing_held_piece() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn drag_release_places_pieces_without_breaking_click_to_carry() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -581,6 +635,10 @@ fn drag_release_places_pieces_without_breaking_click_to_carry() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn drag_release_outside_or_over_controls_keeps_the_piece() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -606,6 +664,10 @@ fn drag_release_outside_or_over_controls_keeps_the_piece() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn cancelled_drag_keeps_piece_and_tray_drop_returns_it_once() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -641,6 +703,10 @@ fn cancelled_drag_keeps_piece_and_tray_drop_returns_it_once() {
     assert_eq!(session.tray_order.len(), 9);
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn supplied_repeated_effects_survive_frames_and_cancel() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -707,6 +773,10 @@ fn supplied_repeated_effects_survive_frames_and_cancel() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn original_dialogue_is_visible_and_waits_when_muted() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -745,8 +815,9 @@ fn original_dialogue_is_visible_and_waits_when_muted() {
         assert_eq!(anim.frame_delay_secs, 20.0 * DOS_TICK_SECS);
         let font = FontAsset::load(&dir.join("MJP.NFT")).unwrap();
         let toolbox = ToolboxAsset::load(&dir.join("MJP.TBX"), 0).unwrap();
+        let mut renderer = PuzzleRenderer::new();
         let mut fb = Framebuffer::new();
-        session.render(&mut fb, &toolbox, &font, 0, 0);
+        renderer.render(&session, &mut fb, &toolbox, &font, 0, 0);
         assert_eq!(
             fb.pixels[80 * 320 + 10 + SCENE_OFFSET_X as usize],
             if ega { 15 } else { 248 }
@@ -770,6 +841,10 @@ fn original_dialogue_is_visible_and_waits_when_muted() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn solved_clicks_select_complete_character_groups() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -793,6 +868,10 @@ fn solved_clicks_select_complete_character_groups() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn solved_hotspot_centers_keep_original_selection() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -809,6 +888,10 @@ fn solved_hotspot_centers_keep_original_selection() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn all_solved_hotspot_centers_select_and_complete_their_animation() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -850,8 +933,9 @@ fn all_solved_hotspot_centers_select_and_complete_their_animation() {
                     anim.default_delay_secs,
                     f32::from(hotspot.playback.frame_delay_ticks) * DOS_TICK_SECS
                 );
+                let mut renderer = PuzzleRenderer::new();
                 let mut fb = Framebuffer::new();
-                session.render(&mut fb, &toolbox, &font, x, y);
+                renderer.render(&session, &mut fb, &toolbox, &font, x, y);
                 for _ in 0..2000 {
                     if session.active_anim.is_none() {
                         break;
@@ -863,7 +947,7 @@ fn all_solved_hotspot_centers_select_and_complete_their_animation() {
                     "P{id:02} ega={ega} sequence={}",
                     hotspot.playback.seq_idx
                 );
-                session.render(&mut fb, &toolbox, &font, x, y);
+                renderer.render(&session, &mut fb, &toolbox, &font, x, y);
                 checked += 1;
             }
         }
@@ -872,6 +956,10 @@ fn all_solved_hotspot_centers_select_and_complete_their_animation() {
     println!("{checked} hotspot animations completed across 30 scene selections");
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn tray_scroll_clamps_to_visible_bounds() {
     let asset = PuzzleAsset::load(Path::new(env!("CARGO_MANIFEST_DIR")), 1, false).unwrap();
@@ -892,6 +980,10 @@ fn tray_scroll_clamps_to_visible_bounds() {
     assert_eq!(session.tray_scroll, 0);
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn board_cache_updates_across_toggles_and_placements() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -899,32 +991,38 @@ fn board_cache_updates_across_toggles_and_placements() {
     let asset = PuzzleAsset::load(dir, 1, false).unwrap();
     let toolbox = ToolboxAsset::load(&dir.join("MJP.TBX"), 0).unwrap();
     let mut session = PuzzleSession::new(1, asset, 3, true, false, false);
+    let mut renderer = PuzzleRenderer::new();
 
     let mut fb_initial = Framebuffer::new();
-    session.render(&mut fb_initial, &toolbox, &font, 0, 0);
+    renderer.render(&session, &mut fb_initial, &toolbox, &font, 0, 0);
 
-    session.grid_lines = true;
+    session.toggle_grid_lines();
     let mut fb_grid = Framebuffer::new();
-    session.render(&mut fb_grid, &toolbox, &font, 0, 0);
+    renderer.render(&session, &mut fb_grid, &toolbox, &font, 0, 0);
     assert_ne!(fb_initial.pixels, fb_grid.pixels);
 
-    session.toolbox_open = false;
+    session.toggle_toolbox();
     let mut fb_no_tbx = Framebuffer::new();
-    session.render(&mut fb_no_tbx, &toolbox, &font, 0, 0);
+    renderer.render(&session, &mut fb_no_tbx, &toolbox, &font, 0, 0);
     assert_ne!(fb_grid.pixels, fb_no_tbx.pixels);
 
-    session.pieces[0].placed = true;
+    session.set_piece_placed_for_test(0, true);
     let mut fb_placed = Framebuffer::new();
-    session.render(&mut fb_placed, &toolbox, &font, 0, 0);
+    renderer.render(&session, &mut fb_placed, &toolbox, &font, 0, 0);
     assert_ne!(fb_no_tbx.pixels, fb_placed.pixels);
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn render_reference_matches_scene_view() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     for ega in [false, true] {
         let asset = PuzzleAsset::load(dir, 1, ega).unwrap();
         let session = PuzzleSession::new(1, asset, 3, true, false, false);
+        let mut renderer = PuzzleRenderer::new();
         let mut expected = Framebuffer::new();
         render_scene_view(
             &mut expected,
@@ -932,12 +1030,16 @@ fn render_reference_matches_scene_view() {
             session.asset.static_frame_idx(),
         );
         let mut actual = Framebuffer::new();
-        session.render_reference(&mut actual);
+        renderer.render_reference(&session, &mut actual);
         assert_eq!(actual.pixels, expected.pixels, "ega={ega}");
         assert_eq!(actual.palette, expected.palette, "ega={ega}");
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn update_ignores_non_finite_and_negative_dt() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -956,6 +1058,10 @@ fn update_ignores_non_finite_and_negative_dt() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn scroll_tray_handles_extreme_deltas() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -967,6 +1073,10 @@ fn scroll_tray_handles_extreme_deltas() {
     assert_eq!(session.tray_scroll, 0);
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn replace_scene_asset_preserves_solved_and_partial_state() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -999,6 +1109,10 @@ fn replace_scene_asset_preserves_solved_and_partial_state() {
     assert!(!session.toolbox_open);
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn blend_picture_guide_matches_reference_with_placed_held_and_clipped_pieces() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1007,9 +1121,11 @@ fn blend_picture_guide_matches_reference_with_placed_held_and_clipped_pieces() {
         let asset = PuzzleAsset::load(dir, 1, ega).unwrap();
         let toolbox = ToolboxAsset::load(&dir.join("MJP.TBX"), usize::from(ega)).unwrap();
         let mut session = PuzzleSession::new(1, asset, 3, true, false, false);
-        session.pieces[0].placed = true;
-        session.pieces[4].placed = true;
+        let mut renderer = PuzzleRenderer::new();
+        session.set_piece_placed_for_test(0, true);
+        session.set_piece_placed_for_test(4, true);
         session.held_piece = Some(1);
+        session.bump_visual();
 
         let pfx = session.playfield_x();
         let pfy = session.playfield_y();
@@ -1022,18 +1138,18 @@ fn blend_picture_guide_matches_reference_with_placed_held_and_clipped_pieces() {
         ];
 
         let pal = session.asset.palette;
-        let bg_idx = session.ui_colors.board_bg as usize;
+        let bg_idx = session.full_picture_fb().color_index([204, 204, 187]) as usize;
         let bg_rgba = [pal[bg_idx][0], pal[bg_idx][1], pal[bg_idx][2], 255];
 
         for &(mx, my) in &cursor_positions {
             let mut fb = Framebuffer::new();
-            session.render(&mut fb, &toolbox, &font, mx, my);
+            renderer.render(&session, &mut fb, &toolbox, &font, mx, my);
 
             let mut actual = vec![0u8; 320 * 200 * 4];
             fb.to_rgba8(&mut actual);
             let mut expected = actual.clone();
 
-            session.blend_picture_guide(&mut actual, mx, my);
+            renderer.blend_picture_guide(&session, &mut actual, mx, my);
 
             // Simple pixel-by-pixel reference implementation
             for py in 0..PLAYFIELD_H {
@@ -1100,4 +1216,282 @@ fn blend_picture_guide_matches_reference_with_placed_held_and_clipped_pieces() {
             assert_eq!(actual, expected, "ega={ega}, cursor=({mx}, {my})");
         }
     }
+}
+
+fn synthetic_puzzle_asset(id: usize, ega: bool) -> PuzzleAsset {
+    use crate::assets::{NamedSequence, SequencePlayback};
+    let mut palette = [[0u8; 3]; 256];
+    palette[1] = [0, 0, 170];
+    palette[2] = [0, 170, 0];
+    palette[4] = [170, 0, 0];
+    palette[7] = [204, 204, 187];
+    palette[8] = [85, 85, 85];
+    palette[14] = [255, 255, 85];
+    palette[15] = [255, 255, 255];
+    let sprite = Sprite8061 {
+        stride: 274,
+        height: 200,
+        transparent_color: 0,
+        bpp: if ega { 4 } else { 8 },
+        sub_x: 0,
+        sub_y: 0,
+        width: 274,
+        sub_h: 200,
+        pixels: vec![if ega { 2 } else { 1 }; 274 * 200],
+        opacity: None,
+    };
+    let records = vec![
+        SceneRecord::Frame {
+            bg_color: 0,
+            bg_frame_idx: 0,
+            commands: vec![FrameCommand::Sprite {
+                x: 0,
+                y: 0,
+                sprite_idx: 0,
+                flags: 0,
+            }],
+        },
+        SceneRecord::SequenceHeader {
+            name: "FILM".to_string(),
+            default_playback: Some(SequencePlayback {
+                seq_idx: 0,
+                repetitions: 1,
+                frame_delay_ticks: 2,
+            }),
+            hotspots: Vec::new(),
+        },
+        SceneRecord::Frame {
+            bg_color: 0,
+            bg_frame_idx: 0,
+            commands: vec![
+                FrameCommand::Delay { ticks: 2, raw: 8 },
+                FrameCommand::Sprite {
+                    x: 0,
+                    y: 0,
+                    sprite_idx: 0,
+                    flags: 0,
+                },
+            ],
+        },
+        SceneRecord::Frame {
+            bg_color: 0,
+            bg_frame_idx: 0,
+            commands: vec![FrameCommand::Sprite {
+                x: 0,
+                y: 0,
+                sprite_idx: 0,
+                flags: 0,
+            }],
+        },
+    ];
+    PuzzleAsset {
+        id,
+        palette,
+        records,
+        sequences: vec![NamedSequence {
+            name: "FILM".to_string(),
+            header_idx: 1,
+            start_frame: 2,
+            end_frame: 4,
+        }],
+        hotspots: Vec::new(),
+        full_anim_seq_idx: 0,
+        sounds: Vec::new(),
+        sprites: vec![sprite],
+    }
+}
+
+fn synthetic_toolbox_and_font() -> (ToolboxAsset, FontAsset) {
+    let mut palette = [[0u8; 3]; 256];
+    palette[15] = [255, 255, 255];
+    let tbx = ToolboxAsset {
+        palette,
+        sprites: Vec::new(),
+    };
+    let font = FontAsset {
+        name: "TEST".to_string(),
+        strip_width: 96,
+        height: 8,
+        stride_bytes: 12,
+        char_x: [0; 96],
+        char_w: [4; 96],
+        bitmap: vec![0xAA; 8 * 12],
+    };
+    (tbx, font)
+}
+
+#[test]
+fn pure_gameplay_pick_place_hint_and_complete_without_assets() {
+    let dir = Path::new("");
+    let mut audio = AudioEngine::new(dir, false, false);
+    let asset = synthetic_puzzle_asset(1, false);
+    let mut session = PuzzleSession::new(1, asset, 2, true, false, true);
+
+    assert_eq!(session.pieces().len(), 4);
+    assert_eq!(session.tray_order().len(), 4);
+    assert!(!session.is_solved());
+
+    // Trigger hint and verify blink phase flips over time
+    session.apply_command(PuzzleCommand::TriggerHint, &mut audio);
+    let hint_key_0 = session.present_key(120, 80, false);
+    session.update(0.125, &mut audio);
+    let hint_key_1 = session.present_key(120, 80, false);
+    assert_ne!(hint_key_0, hint_key_1);
+
+    // Pick and place all 4 pieces via typed commands
+    for _ in 0..4 {
+        assert_eq!(
+            session.apply_command(PuzzleCommand::PointerPress { x: 20, y: 40 }, &mut audio),
+            None
+        );
+        let held = session.held_piece().expect("piece picked from tray");
+        let piece = &session.pieces()[held];
+        let tx = session.playfield_x() + piece.base_x + piece.base_w / 2;
+        let ty = session.playfield_y() + piece.base_y + piece.base_h / 2;
+        session.apply_command(PuzzleCommand::PointerPress { x: tx, y: ty }, &mut audio);
+        assert!(session.held_piece().is_none());
+    }
+
+    assert!(session.is_solved());
+    assert!(!session.toolbox_open());
+    assert!(session.active_anim().is_some());
+
+    // Clicking during completion animation skips it
+    session.apply_command(PuzzleCommand::PointerPress { x: 160, y: 100 }, &mut audio);
+    assert!(session.active_anim().is_none());
+
+    // Clicking top-left menu hotspot returns OpenMenu
+    assert_eq!(
+        session.apply_command(PuzzleCommand::PointerPress { x: 5, y: 5 }, &mut audio),
+        Some(PuzzleAction::OpenMenu)
+    );
+}
+
+#[test]
+fn present_key_tracks_idle_hover_guide_timer_and_dissolve_without_assets() {
+    let dir = Path::new("");
+    let mut audio = AudioEngine::new(dir, false, false);
+    let asset = synthetic_puzzle_asset(1, false);
+    let mut session = PuzzleSession::new(1, asset, 3, true, false, true);
+
+    // Idle board pointer motion does not invalidate
+    let k0 = session.present_key(120, 80, true);
+    let k1 = session.present_key(200, 140, true);
+    assert_eq!(k0, k1);
+
+    // Timer ticks do not invalidate the DOS framebuffer key
+    session.update(1.5, &mut audio);
+    assert!(session.elapsed_secs() >= 1.5);
+    assert_eq!(session.present_key(120, 80, true), k0);
+
+    // Tray hover invalidates (and keyboard pointer tray hover also invalidates)
+    let k_hover = session.present_key(20, 40, true);
+    assert_ne!(k0, k_hover);
+    session.move_keyboard_pointer(-1.0, 0.0, 0.0);
+    let k_kbd_hover = session.present_key(200, 140, true);
+    assert_ne!(k0, k_kbd_hover);
+    session.clear_keyboard_pointer();
+    let k_after_clear = session.present_key(120, 80, true);
+    assert_ne!(k_kbd_hover, k_after_clear);
+    assert_eq!(session.present_key(200, 140, true), k_after_clear);
+    let k0 = k_after_clear;
+
+    // Picture guide toggle invalidates
+    assert_ne!(session.present_key(120, 80, false), k0);
+
+    // Held piece tracks movement
+    session.apply_command(PuzzleCommand::PointerPress { x: 20, y: 40 }, &mut audio);
+    let k_held_a = session.present_key(100, 100, true);
+    let k_held_b = session.present_key(104, 100, true);
+    assert_ne!(k_held_a, k_held_b);
+
+    // Auto-solve starts dissolve animation and dissolve steps advance key
+    session.apply_command(PuzzleCommand::AutoSolve, &mut audio);
+    let k_anim_0 = session.present_key(0, 0, true);
+    session.update(0.05, &mut audio);
+    let k_anim_1 = session.present_key(0, 0, true);
+    assert_ne!(k_anim_0, k_anim_1);
+}
+
+#[test]
+fn puzzle_renderer_cache_invalidates_on_board_and_video_mode_changes_without_assets() {
+    let (tbx, font) = synthetic_toolbox_and_font();
+    let vga = synthetic_puzzle_asset(1, false);
+    let mut ega = synthetic_puzzle_asset(1, true);
+    ega.palette[1] = [0, 85, 255];
+    let mut session = PuzzleSession::new(1, vga, 2, true, false, false);
+    let mut renderer = PuzzleRenderer::new();
+
+    let mut fb_vga = Framebuffer::new();
+    renderer.render(&session, &mut fb_vga, &tbx, &font, 160, 100);
+
+    // Grid lines toggle updates cached board
+    session.toggle_grid_lines();
+    let mut fb_grid = Framebuffer::new();
+    renderer.render(&session, &mut fb_grid, &tbx, &font, 160, 100);
+    assert_ne!(fb_vga.pixels, fb_grid.pixels);
+
+    // Video mode switch via replace_scene_asset invalidates board & guide caches
+    session.replace_scene_asset(ega);
+    let mut fb_ega = Framebuffer::new();
+    renderer.render(&session, &mut fb_ega, &tbx, &font, 160, 100);
+    assert_ne!(fb_grid.pixels, fb_ega.pixels);
+}
+
+#[test]
+fn puzzle_renderer_isolates_caches_across_replaced_sessions_without_assets() {
+    let (tbx, font) = synthetic_toolbox_and_font();
+    let vga = synthetic_puzzle_asset(1, false);
+    let mut ega = synthetic_puzzle_asset(1, true);
+    ega.palette[1] = [0, 85, 255];
+
+    let session_a = PuzzleSession::new(1, vga.clone(), 2, false, false, false);
+    let session_b = PuzzleSession::new(1, vga, 4, true, true, false);
+    let session_c = PuzzleSession::new(1, ega, 2, false, false, false);
+
+    assert_ne!(
+        session_a.present_key(120, 80, true),
+        session_b.present_key(120, 80, true)
+    );
+    assert_ne!(
+        session_a.present_key(120, 80, true),
+        session_c.present_key(120, 80, true)
+    );
+
+    let mut reused = PuzzleRenderer::new();
+
+    let mut fb_a = Framebuffer::new();
+    reused.render(&session_a, &mut fb_a, &tbx, &font, 160, 100);
+    let mut rgba_a = vec![0u8; 320 * 200 * 4];
+    fb_a.to_rgba8(&mut rgba_a);
+    reused.blend_picture_guide(&session_a, &mut rgba_a, 160, 100);
+
+    // Same puzzle_num and initial revision counters, different grid settings
+    let mut fb_b_reused = Framebuffer::new();
+    reused.render(&session_b, &mut fb_b_reused, &tbx, &font, 160, 100);
+    let mut fb_b_fresh = Framebuffer::new();
+    PuzzleRenderer::new().render(&session_b, &mut fb_b_fresh, &tbx, &font, 160, 100);
+    assert_eq!(fb_b_reused.pixels, fb_b_fresh.pixels);
+    assert_eq!(fb_b_reused.palette, fb_b_fresh.palette);
+    assert_ne!(fb_b_reused.pixels, fb_a.pixels);
+
+    // Same puzzle_num, same grid settings, different video mode (EGA)
+    let mut fb_c_reused = Framebuffer::new();
+    reused.render(&session_c, &mut fb_c_reused, &tbx, &font, 160, 100);
+    let mut rgba_c_reused = vec![0u8; 320 * 200 * 4];
+    fb_c_reused.to_rgba8(&mut rgba_c_reused);
+    reused.blend_picture_guide(&session_c, &mut rgba_c_reused, 160, 100);
+
+    let mut fresh_c = PuzzleRenderer::new();
+    let mut fb_c_fresh = Framebuffer::new();
+    fresh_c.render(&session_c, &mut fb_c_fresh, &tbx, &font, 160, 100);
+    let mut rgba_c_fresh = vec![0u8; 320 * 200 * 4];
+    fb_c_fresh.to_rgba8(&mut rgba_c_fresh);
+    fresh_c.blend_picture_guide(&session_c, &mut rgba_c_fresh, 160, 100);
+
+    assert_eq!(fb_c_reused.pixels, fb_c_fresh.pixels);
+    assert_eq!(fb_c_reused.palette, fb_c_fresh.palette);
+    assert_eq!(rgba_c_reused, rgba_c_fresh);
+    assert_ne!(fb_c_reused.palette, fb_a.palette);
+    assert_ne!(rgba_c_reused, rgba_a);
 }

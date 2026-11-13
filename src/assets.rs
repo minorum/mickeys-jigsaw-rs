@@ -1019,16 +1019,28 @@ impl Preferences {
 mod tests {
     use super::*;
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn vga_sprite_pixels_match_original_driver() {
         check_sprite_pixels(include_str!("../validation/sprite-pixels.tsv"), false);
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn packed_sprite_pixels_match_original_driver() {
         check_sprite_pixels(include_str!("../validation/sprite-pixels-tandy.tsv"), true);
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn ega_sprite_pixels_match_original_conversion_and_driver() {
         let mut loaded = None;
@@ -1295,6 +1307,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn font_rejects_truncated_rows_and_invalid_bounds() {
         let original = fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("MJP.NFT")).unwrap();
@@ -1317,6 +1333,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn supplied_font_keeps_all_literal_pixels() {
         let original = fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("MJP.NFT")).unwrap();
@@ -1335,6 +1355,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn supplied_dialogue_preserves_polygons_and_multiple_bubbles() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1360,6 +1384,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn truncated_dialogue_is_rejected() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1393,6 +1421,10 @@ mod tests {
         assert!(SpeechBubble::parse_all(&[0, 0]).unwrap()[0].is_none());
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn alternative_dialogue_selects_one_voice_and_keeps_intro_once() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1419,6 +1451,10 @@ mod tests {
         assert_eq!(entry.select_voice(|| true), Some(1));
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn supplied_scene_resources_resolve() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1486,6 +1522,10 @@ mod tests {
         assert_eq!(bubble_count, 93);
     }
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn malformed_ega_scene_loads_original_vga() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"));

@@ -1,6 +1,13 @@
 use super::*;
-use crate::assets::PrintAsset;
-use crate::audio::{synthesize_iss_song, synthesize_nnv_phrase};
+use crate::app::{AppInput, AppRenderer, AppScreen, BROWSER_BUTTONS, GameApp, game_viewport};
+use crate::assets::{
+    FontAsset, Preferences, PrintAsset, PuzzleAsset, ToolboxAsset, load_ilbm_container,
+};
+use crate::audio::{AudioEngine, CommonSound, synthesize_iss_song, synthesize_nnv_phrase};
+use crate::graphics::Framebuffer;
+use crate::puzzle::{PuzzleAction, PuzzleSession};
+use crate::puzzle_render::PuzzleRenderer;
+use crate::setup::SetupMenu;
 
 #[test]
 fn play_viewport_preserves_scene_and_input_coordinates() {
@@ -27,6 +34,10 @@ fn play_viewport_preserves_scene_and_input_coordinates() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn picture_guide_preserves_placed_and_held_artwork() {
     let dir = test_game_dir();
@@ -35,15 +46,16 @@ fn picture_guide_preserves_placed_and_held_artwork() {
         let asset = PuzzleAsset::load(&dir, 1, ega).unwrap();
         let toolbox = ToolboxAsset::load(&dir.join("MJP.TBX"), usize::from(ega)).unwrap();
         let mut session = PuzzleSession::new(1, asset, 3, true, false, false);
+        let mut renderer = PuzzleRenderer::new();
         let original = session.full_picture_fb.pixels;
-        session.pieces[0].placed = true;
+        session.set_piece_placed_for_test(0, true);
         session.held_piece = Some(1);
         let mut fb = Framebuffer::new();
-        session.render(&mut fb, &toolbox, &font, 160, 100);
+        renderer.render(&session, &mut fb, &toolbox, &font, 160, 100);
         let mut before = vec![0; 320 * 200 * 4];
         fb.to_rgba8(&mut before);
         let mut after = before.clone();
-        session.blend_picture_guide(&mut after, 160, 100);
+        renderer.blend_picture_guide(&session, &mut after, 160, 100);
         assert_ne!(before, after, "ega={ega}");
         for (index, held) in [(0, false), (1, true)] {
             let piece = &session.pieces[index];
@@ -81,11 +93,15 @@ fn picture_guide_preserves_placed_and_held_artwork() {
         assert_eq!(session.full_picture_fb.pixels, original);
         session.solved = true;
         let mut solved = before.clone();
-        session.blend_picture_guide(&mut solved, 160, 100);
+        renderer.blend_picture_guide(&session, &mut solved, 160, 100);
         assert_eq!(solved, before);
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn completed_picture_is_unchanged_by_timer_setting() {
     let dir = test_game_dir();
@@ -94,13 +110,14 @@ fn completed_picture_is_unchanged_by_timer_setting() {
         let asset = PuzzleAsset::load(&dir, 1, ega).unwrap();
         let toolbox = ToolboxAsset::load(&dir.join("MJP.TBX"), usize::from(ega)).unwrap();
         let mut session = PuzzleSession::new(1, asset, 2, true, false, false);
+        let mut renderer = PuzzleRenderer::new();
         session.solved = true;
         session.elapsed_secs = 3661.0;
         let mut without_timer = Framebuffer::new();
-        session.render(&mut without_timer, &toolbox, &font, 160, 100);
+        renderer.render(&session, &mut without_timer, &toolbox, &font, 160, 100);
         session.timer_enabled = true;
         let mut with_timer = Framebuffer::new();
-        session.render(&mut with_timer, &toolbox, &font, 160, 100);
+        renderer.render(&session, &mut with_timer, &toolbox, &font, 160, 100);
         let changed = with_timer
             .pixels
             .iter()
@@ -122,29 +139,21 @@ fn test_browser() -> GameApp {
         sfx_on: 0,
         ..Preferences::default()
     };
-    GameApp {
-        font: FontAsset::load(&game_dir.join("MJP.NFT")).unwrap(),
-        tbx: ToolboxAsset::load(&game_dir.join("MJP.TBX"), 0).unwrap(),
-        tbx_ega: ToolboxAsset::load(&game_dir.join("MJP.TBX"), 1).unwrap(),
-        title_images: Vec::new(),
-        credit_images: Vec::new(),
-        setup_menu: SetupMenu::new(prefs),
+    GameApp::from_parts(
+        game_dir.clone(),
+        FontAsset::load(&game_dir.join("MJP.NFT")).unwrap(),
+        ToolboxAsset::load(&game_dir.join("MJP.TBX"), 0).unwrap(),
+        ToolboxAsset::load(&game_dir.join("MJP.TBX"), 1).unwrap(),
+        PuzzleAsset::load(&game_dir, 1, false).unwrap(),
         prefs,
-        audio: AudioEngine::new(&game_dir, false, false),
-        screen: AppScreen::Browser,
-        screen_timer: 0.0,
-        selected_puzzle: 1,
-        preview_asset: PuzzleAsset::load(&game_dir, 1, false).unwrap(),
-        preview_cache: None,
-        selected_grid_dim: 3,
-        curved_edges: true,
-        session: None,
-        session_use_ega: false,
-        error: None,
-        game_dir,
-    }
+        false,
+    )
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn preset_progress_survives_resume_and_video_switching() {
     let mut app = test_browser();
@@ -171,33 +180,42 @@ fn preset_progress_survives_resume_and_video_switching() {
     assert!((11..=16).contains(&session.pieces.len()));
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn common_captions_render_and_respect_text_preference() {
     let mut app = test_browser();
+    let mut renderer = AppRenderer::new();
     for ega in [false, true] {
         app.preview_asset = PuzzleAsset::load(&app.game_dir, 1, ega).unwrap();
         app.prefs.text_msg_on = 0;
-        let mut baseline = Framebuffer::new();
-        app.render(&mut baseline, 160, 100);
+        renderer.render(&app, 160, 100);
+        let baseline = renderer.fb.clone();
         app.audio.play_common(CommonSound::ChooseSize);
-        let mut hidden = Framebuffer::new();
-        app.render(&mut hidden, 160, 100);
+        renderer.render(&app, 160, 100);
+        let hidden = renderer.fb.clone();
         assert_eq!(baseline.pixels, hidden.pixels);
         app.prefs.text_msg_on = 1;
-        let mut shown = Framebuffer::new();
-        app.render(&mut shown, 160, 100);
+        renderer.render(&app, 160, 100);
+        let shown = renderer.fb.clone();
         assert_ne!(baseline.pixels, shown.pixels);
         assert_eq!(&baseline.pixels[164 * 320..], &shown.pixels[164 * 320..]);
         app.audio.update(60.0);
-        let mut expired = Framebuffer::new();
-        app.render(&mut expired, 160, 100);
-        assert_eq!(baseline.pixels, expired.pixels);
+        renderer.render(&app, 160, 100);
+        assert_eq!(baseline.pixels, renderer.fb.pixels);
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn preset_pickup_captions_have_visible_glyphs() {
     let mut app = test_browser();
+    let mut renderer = AppRenderer::new();
     app.prefs.text_msg_on = 1;
     app.selected_grid_dim = 1;
     for ega in [false, true] {
@@ -214,8 +232,8 @@ fn preset_pickup_captions_have_visible_glyphs() {
                 session.playfield_y() + piece.base_y + piece.base_h / 2,
             );
             session.handle_click(x, y, &mut app.audio);
-            let mut fb = Framebuffer::new();
-            app.render(&mut fb, 0, 0);
+            renderer.render(&app, 0, 0);
+            let fb = &renderer.fb;
             let black = fb.color_index([0; 3]);
             let count = (150..160)
                 .flat_map(|y| (5..315).map(move |x| (x, y)))
@@ -226,6 +244,10 @@ fn preset_pickup_captions_have_visible_glyphs() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn setup_video_change_preserves_active_progress_and_rolls_back_failure() {
     let mut app = test_browser();
@@ -273,6 +295,10 @@ fn setup_video_change_preserves_active_progress_and_rolls_back_failure() {
     assert!(session.pieces[placed].placed);
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn setup_video_change_keeps_solved_state_and_supports_ega_fallback() {
     let mut app = test_browser();
@@ -290,6 +316,10 @@ fn setup_video_change_keeps_solved_state_and_supports_ega_fallback() {
     assert!(app.session_use_ega);
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn video_switch_is_atomic_when_preview_and_paused_puzzle_differ() {
     let mut app = test_browser();
@@ -327,6 +357,10 @@ fn video_switch_is_atomic_when_preview_and_paused_puzzle_differ() {
     assert!(app.can_resume_selected());
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn browser_resume_preserves_board_tray_held_piece_and_time() {
     let mut app = test_browser();
@@ -367,6 +401,10 @@ fn browser_resume_preserves_board_tray_held_piece_and_time() {
     assert_eq!(session.elapsed_secs, 0.0);
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn browser_only_resumes_matching_unfinished_puzzles() {
     let mut app = test_browser();
@@ -389,6 +427,10 @@ fn browser_only_resumes_matching_unfinished_puzzles() {
     assert!(!app.can_resume_selected());
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn every_puzzle_can_start_in_debug_builds() {
     for num in 1..=15 {
@@ -428,6 +470,10 @@ fn masked_sprites_preserve_every_palette_index() {
     assert_eq!(fb.pixels[896], 9);
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn cut_pieces_cover_the_picture_exactly_once() {
     for ega in [false, true] {
@@ -476,6 +522,10 @@ fn truncated_container_is_rejected() {
     assert!(decompress::split_multi_resource(&[1, 0, 4, 0, 0, 0, 42]).is_err());
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn truncated_da_is_rejected() {
     let mut raw = vec![0; 20];
@@ -487,6 +537,10 @@ fn truncated_da_is_rejected() {
     assert!(decompress::decompress_da(&compressed).is_err());
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn truncated_ilbm_is_rejected() {
     let raw = std::fs::read(test_game_dir().join("MJP.TTL")).unwrap();
@@ -507,6 +561,10 @@ fn truncated_sprite_is_rejected() {
     assert!(assets::Sprite8061::from_record(&rec).is_err());
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn test_load_font_and_measure_text() {
     let dir = test_game_dir();
@@ -521,6 +579,10 @@ fn test_load_font_and_measure_text() {
     fb.draw_text_shadowed(&font, "Hello Mickey!", 10, 10, 0, 15);
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn test_load_title_and_credits_ilbm() {
     let dir = test_game_dir();
@@ -534,6 +596,10 @@ fn test_load_title_and_credits_ilbm() {
     assert_eq!(error, "Truncated DA bitstream");
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn test_load_toolbox() {
     let dir = test_game_dir();
@@ -569,6 +635,10 @@ fn test_load_toolbox() {
     assert!(ToolboxAsset::load(&dir.join("MJP.TBX"), 3).is_err());
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn vga_palette_preserves_original_rgb_bytes() {
     let dir = test_game_dir();
@@ -600,6 +670,10 @@ fn vga_palette_preserves_original_rgb_bytes() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn ega_palette_has_no_six_byte_header() {
     let dir = test_game_dir();
@@ -627,6 +701,10 @@ fn ega_palette_has_no_six_byte_header() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn test_load_all_15_puzzles_vga_and_ega_and_prt() {
     let dir = test_game_dir();
@@ -661,6 +739,10 @@ fn test_load_all_15_puzzles_vga_and_ega_and_prt() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn scene_sound_descriptors_preserve_original_references() {
     let dir = test_game_dir();
@@ -699,6 +781,10 @@ fn scene_sound_descriptors_preserve_original_references() {
     assert_eq!(missing_music, ["P11:SOUND3:2"]);
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn test_puzzle_cutting_all_difficulties_curved_and_straight() {
     let dir = test_game_dir();
@@ -708,7 +794,7 @@ fn test_puzzle_cutting_all_difficulties_curved_and_straight() {
 
     for dim in 2..=8 {
         for &curved in &[false, true] {
-            let mut sess = PuzzleSession::new(1, asset.clone(), dim, curved, true, true);
+            let sess = PuzzleSession::new(1, asset.clone(), dim, curved, true, true);
             assert_eq!(sess.pieces.len(), dim * dim);
             assert_eq!(sess.tray_order.len(), dim * dim);
 
@@ -726,11 +812,16 @@ fn test_puzzle_cutting_all_difficulties_curved_and_straight() {
             }
 
             let mut fb = Framebuffer::new();
-            sess.render(&mut fb, &tbx, &font, 160, 100);
+            let mut renderer = PuzzleRenderer::new();
+            renderer.render(&sess, &mut fb, &tbx, &font, 160, 100);
         }
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn native_bubblegum_sound_remains_in_p11_scene_sequences() {
     let dir = test_game_dir();
@@ -775,6 +866,10 @@ fn native_bubblegum_sound_remains_in_p11_scene_sequences() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn test_audio_decoders_nnv_ess_and_iss() {
     let dir = test_game_dir();
@@ -807,6 +902,10 @@ fn test_audio_decoders_nnv_ess_and_iss() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn iss_music_and_standalone_speech_banks_load() {
     let engine = AudioEngine::new(&test_game_dir(), false, false);
@@ -819,6 +918,10 @@ fn iss_music_and_standalone_speech_banks_load() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn click_to_pick_place_complete_and_skip_animation() {
     let dir = test_game_dir();
@@ -862,11 +965,12 @@ fn click_to_pick_place_complete_and_skip_animation() {
                     assert!(session.tray_order.is_empty());
                     assert!(session.pieces.iter().all(|piece| piece.placed));
                     let mut fb = Framebuffer::new();
-                    session.render(&mut fb, &toolbox, &font, 160, 100);
+                    let mut renderer = PuzzleRenderer::new();
+                    renderer.render(&session, &mut fb, &toolbox, &font, 160, 100);
                     assert!(session.active_anim.is_some());
                     session.handle_click(160, 100, &mut audio);
                     assert!(session.active_anim.is_none());
-                    session.render(&mut fb, &toolbox, &font, 160, 100);
+                    renderer.render(&session, &mut fb, &toolbox, &font, 160, 100);
                     assert_eq!(
                         session.handle_click(2, 2, &mut audio),
                         Some(PuzzleAction::OpenMenu)
@@ -883,6 +987,10 @@ fn click_to_pick_place_complete_and_skip_animation() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn animation_preserves_elapsed_remainder() {
     let mut asset = PuzzleAsset::load(&test_game_dir(), 1, false).unwrap();
@@ -978,6 +1086,10 @@ fn thumbnails_fit_inside_their_tray_slot() {
     assert!(count > 1000);
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn toolbox_graphics_match_actual_scene_depth_including_fallbacks() {
     let mut app = test_browser();
@@ -993,12 +1105,18 @@ fn toolbox_graphics_match_actual_scene_depth_including_fallbacks() {
         )
         .unwrap();
         let mut expected = Framebuffer::new();
-        app.session
-            .as_mut()
-            .unwrap()
-            .render(&mut expected, &toolbox, &app.font, 160, 100);
-        let mut actual = Framebuffer::new();
-        app.render(&mut actual, 160, 100);
+        let mut puzzle_renderer = PuzzleRenderer::new();
+        puzzle_renderer.render(
+            app.session.as_ref().unwrap(),
+            &mut expected,
+            &toolbox,
+            &app.font,
+            160,
+            100,
+        );
+        let mut app_renderer = AppRenderer::new();
+        app_renderer.render(&app, 160, 100);
+        let actual = &app_renderer.fb;
         assert!(
             actual.pixels == expected.pixels,
             "P{id:02}, toolbox variant {}",
@@ -1007,6 +1125,10 @@ fn toolbox_graphics_match_actual_scene_depth_including_fallbacks() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn browser_and_puzzle_controls_use_palette_colors() {
     let dir = test_game_dir();
@@ -1014,16 +1136,19 @@ fn browser_and_puzzle_controls_use_palette_colors() {
     for ega in [false, true] {
         let asset = PuzzleAsset::load(&dir, 1, ega).unwrap();
         let toolbox = ToolboxAsset::load(&dir.join("MJP.TBX"), usize::from(ega)).unwrap();
-        let mut session = PuzzleSession::new(1, asset, 3, true, true, true);
+        let session = PuzzleSession::new(1, asset, 3, true, true, true);
+        let mut puzzle_renderer = PuzzleRenderer::new();
         let mut fb = Framebuffer::new();
-        session.render(&mut fb, &toolbox, &font, 160, 100);
+        puzzle_renderer.render(&session, &mut fb, &toolbox, &font, 160, 100);
         assert_eq!(fb.get_pixel(1, 100), fb.color_index([0; 3]), "ega={ega}");
         assert_eq!(fb.get_pixel(3, 19), fb.color_index([85; 3]), "ega={ega}");
         assert_ne!(fb.get_pixel(1, 100), fb.get_pixel(3, 19), "ega={ega}");
         let mut app = test_browser();
         app.setup_menu.prefs.video_mode = if ega { 2 } else { 1 };
         app.sync_prefs_from_setup();
-        app.render(&mut fb, 160, 100);
+        let mut app_renderer = AppRenderer::new();
+        app_renderer.render(&app, 160, 100);
+        let fb = &app_renderer.fb;
         assert_eq!(fb.get_pixel(7, 5), fb.color_index([0; 3]), "ega={ega}");
         assert_eq!(
             fb.get_pixel(7, 173),
@@ -1033,6 +1158,10 @@ fn browser_and_puzzle_controls_use_palette_colors() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn ui_white_uses_the_loaded_palette() {
     let asset = PuzzleAsset::load(&test_game_dir(), 1, false).unwrap();
@@ -1043,6 +1172,10 @@ fn ui_white_uses_the_loaded_palette() {
     assert_ne!(white, 15);
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn printable_export_preserves_bitmap_and_reports_write_failure() {
     let temp = env::temp_dir().join(format!("mickey-print-test-{}", std::process::id()));
@@ -1069,6 +1202,10 @@ fn printable_export_preserves_bitmap_and_reports_write_failure() {
     std::fs::remove_dir_all(temp).unwrap();
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn browser_navigation_wraps_and_buttons_align() {
     let mut app = GameApp::new(test_game_dir(), true).unwrap();
@@ -1101,6 +1238,10 @@ fn browser_navigation_wraps_and_buttons_align() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn open_setup_clears_previous_error() {
     let mut app = test_browser();
@@ -1145,18 +1286,20 @@ fn perf_benchmark() {
 
     let tbx = ToolboxAsset::load(&dir.join("MJP.TBX"), 0).unwrap();
     let font = FontAsset::load(&dir.join("MJP.NFT")).unwrap();
+    let mut renderer = PuzzleRenderer::new();
+    let mut preset_renderer = PuzzleRenderer::new();
     let mut fb = Framebuffer::new();
     let mut rgba = vec![0u8; 320 * 200 * 4];
 
     // Warm up caches
-    session.render(&mut fb, &tbx, &font, 160, 100);
+    renderer.render(&session, &mut fb, &tbx, &font, 160, 100);
     fb.to_rgba8(&mut rgba);
-    session.blend_picture_guide(&mut rgba, 160, 100);
+    renderer.blend_picture_guide(&session, &mut rgba, 160, 100);
 
     let iters = 2000;
     let t2 = Instant::now();
     for _ in 0..iters {
-        session.render(&mut fb, &tbx, &font, 160, 100);
+        renderer.render(&session, &mut fb, &tbx, &font, 160, 100);
         black_box(&fb.pixels[0]);
     }
     let render_warm = t2.elapsed();
@@ -1167,9 +1310,9 @@ fn perf_benchmark() {
     for i in 0..iters {
         let mx = 80 + (i % 160);
         let my = 40 + (i % 120);
-        session.render(&mut fb, &tbx, &font, mx, my);
+        renderer.render(&session, &mut fb, &tbx, &font, mx, my);
         fb.to_rgba8(&mut rgba);
-        session.blend_picture_guide(&mut rgba, mx, my);
+        renderer.blend_picture_guide(&session, &mut rgba, mx, my);
         black_box(rgba[0]);
     }
     let drag_full = t_drag.elapsed();
@@ -1184,7 +1327,7 @@ fn perf_benchmark() {
 
     let t4 = Instant::now();
     for _ in 0..iters {
-        session.blend_picture_guide(&mut rgba, 160, 100);
+        renderer.blend_picture_guide(&session, &mut rgba, 160, 100);
         black_box(rgba[0]);
     }
     let guide = t4.elapsed();
@@ -1195,7 +1338,7 @@ fn perf_benchmark() {
     let anim_iters = 500;
     let t_anim = Instant::now();
     for _ in 0..anim_iters {
-        preset_session.render(&mut fb, &tbx, &font, 160, 100);
+        preset_renderer.render(&preset_session, &mut fb, &tbx, &font, 160, 100);
         black_box(&fb.pixels[0]);
     }
     let render_anim = t_anim.elapsed();
@@ -1206,7 +1349,7 @@ fn perf_benchmark() {
     }
     let t_dissolve = Instant::now();
     for _ in 0..anim_iters {
-        preset_session.render(&mut fb, &tbx, &font, 160, 100);
+        preset_renderer.render(&preset_session, &mut fb, &tbx, &font, 160, 100);
         black_box(&fb.pixels[0]);
     }
     let render_dissolve = t_dissolve.elapsed();
@@ -1228,6 +1371,10 @@ fn perf_benchmark() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn present_signature_skips_idle_board_motion_and_tracks_visual_changes() {
     let dir = test_game_dir();
@@ -1255,6 +1402,10 @@ fn present_signature_skips_idle_board_motion_and_tracks_visual_changes() {
     assert_ne!(held_a, held_b);
 }
 
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
 #[test]
 fn browser_present_signature_tracks_and_expires_common_captions() {
     let dir = test_game_dir();
@@ -1280,7 +1431,180 @@ fn browser_present_signature_tracks_and_expires_common_captions() {
     assert!(app.audio.common_caption().is_none());
     let expired_sig = app.present_signature(120, 80, false, false);
     assert_eq!(expired_sig, idle_sig);
+}
 
-    // Content-aware hashing distinguishes equal-length captions
-    assert_ne!(hash_str_opt(Some("aaaa")), hash_str_opt(Some("bbbb")));
+fn synthetic_app() -> GameApp {
+    use crate::assets::{FrameCommand, NamedSequence, SceneRecord, SequencePlayback, Sprite8061};
+    let mut palette = [[0u8; 3]; 256];
+    palette[1] = [0, 0, 170];
+    palette[7] = [204, 204, 187];
+    palette[15] = [255, 255, 255];
+    let sprite = Sprite8061 {
+        stride: 274,
+        height: 200,
+        transparent_color: 0,
+        bpp: 8,
+        sub_x: 0,
+        sub_y: 0,
+        width: 274,
+        sub_h: 200,
+        pixels: vec![1; 274 * 200],
+        opacity: None,
+    };
+    let preview = PuzzleAsset {
+        id: 1,
+        palette,
+        records: vec![
+            SceneRecord::Frame {
+                bg_color: 0,
+                bg_frame_idx: 0,
+                commands: vec![FrameCommand::Sprite {
+                    x: 0,
+                    y: 0,
+                    sprite_idx: 0,
+                    flags: 0,
+                }],
+            },
+            SceneRecord::SequenceHeader {
+                name: "FILM".to_string(),
+                default_playback: Some(SequencePlayback {
+                    seq_idx: 0,
+                    repetitions: 1,
+                    frame_delay_ticks: 2,
+                }),
+                hotspots: Vec::new(),
+            },
+        ],
+        sequences: vec![NamedSequence {
+            name: "FILM".to_string(),
+            header_idx: 1,
+            start_frame: 0,
+            end_frame: 1,
+        }],
+        hotspots: Vec::new(),
+        full_anim_seq_idx: 0,
+        sounds: Vec::new(),
+        sprites: vec![sprite],
+    };
+    let font = FontAsset {
+        name: "TEST".to_string(),
+        strip_width: 96,
+        height: 8,
+        stride_bytes: 12,
+        char_x: [0; 96],
+        char_w: [4; 96],
+        bitmap: vec![0xAA; 8 * 12],
+    };
+    let tbx = ToolboxAsset {
+        palette,
+        sprites: Vec::new(),
+    };
+    let prefs = Preferences {
+        music_on: 0,
+        sfx_on: 0,
+        text_msg_on: 1,
+        ..Preferences::default()
+    };
+    GameApp::from_parts(
+        PathBuf::from("nonexistent_test_dir"),
+        font,
+        tbx.clone(),
+        tbx,
+        preview,
+        prefs,
+        false,
+    )
+}
+
+#[test]
+fn app_state_transitions_render_cache_and_captions_without_assets() {
+    let mut app = synthetic_app();
+    let mut renderer = AppRenderer::new();
+
+    // Start in Title -> Enter advances to Browser (since credit_images is empty)
+    app.set_screen(AppScreen::Title);
+    assert!(renderer.render_if_needed(&app, 100, 100, false, true));
+    assert!(!renderer.render_if_needed(&app, 120, 100, false, true));
+
+    app.handle_input(&AppInput {
+        enter: true,
+        ..AppInput::default()
+    });
+    assert_eq!(app.screen, AppScreen::Browser);
+    assert!(renderer.render_if_needed(&app, 100, 100, false, true));
+    assert!(!renderer.render_if_needed(&app, 140, 120, false, true));
+
+    // Common caption invalidates Browser signature and expires back to idle signature
+    let idle_sig = app.present_signature(100, 100, false, false);
+    app.audio.play_common(CommonSound::NextPicture);
+    assert_ne!(app.present_signature(100, 100, false, false), idle_sig);
+    assert!(renderer.render_if_needed(&app, 100, 100, false, false));
+
+    for _ in 0..20 {
+        app.handle_input(&AppInput {
+            dt: 0.5,
+            ..AppInput::default()
+        });
+    }
+    assert!(app.audio.common_caption().is_none());
+    assert_eq!(app.present_signature(100, 100, false, false), idle_sig);
+    assert!(renderer.render_if_needed(&app, 100, 100, false, false));
+
+    // Enter Playing with a synthetic session, then F4 pauses into Setup, Esc resumes Playing
+    app.session = Some(PuzzleSession::new(
+        1,
+        app.preview_asset.clone(),
+        2,
+        true,
+        false,
+        true,
+    ));
+    app.set_screen(AppScreen::Playing);
+    assert!(renderer.render_if_needed(&app, 100, 100, false, true));
+    assert!(!renderer.render_if_needed(&app, 150, 120, false, true));
+
+    app.handle_input(&AppInput {
+        f4: true,
+        ..AppInput::default()
+    });
+    assert_eq!(
+        app.screen,
+        AppScreen::Setup {
+            return_to_playing: true
+        }
+    );
+    assert!(renderer.render_if_needed(&app, 100, 100, false, true));
+
+    // Setup menu navigation updates revision and redraws
+    app.handle_input(&AppInput {
+        down: true,
+        ..AppInput::default()
+    });
+    assert_eq!(app.setup_menu.selected_row, 1);
+    assert!(renderer.render_if_needed(&app, 100, 100, false, true));
+
+    // Esc exits Setup back to Playing
+    app.handle_input(&AppInput {
+        escape: true,
+        ..AppInput::default()
+    });
+    assert_eq!(app.screen, AppScreen::Playing);
+    assert!(renderer.render_if_needed(&app, 100, 100, false, true));
+}
+
+#[test]
+fn viewport_resizing_preserves_aspect_ratio_across_desktop_and_compact_sizes() {
+    for (w, h, playing) in [
+        (960.0, 720.0, true),
+        (1280.0, 720.0, true),
+        (1700.0, 1380.0, true),
+        (400.0, 300.0, true),
+        (320.0, 200.0, false),
+    ] {
+        let vp = game_viewport(w, h, playing);
+        assert!(vp.x >= 0.0 && vp.y >= 0.0);
+        assert!(vp.x + vp.w <= w + 0.01);
+        assert!(vp.y + vp.h <= h + 0.01);
+        assert!((vp.w / vp.h - 1.6).abs() < 0.001);
+    }
 }

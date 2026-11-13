@@ -433,6 +433,10 @@ pub fn decode_ilbm(buf: &[u8]) -> Result<IlbmImage, String> {
 mod tests {
     use super::decompress_da;
 
+    #[cfg_attr(
+        not(feature = "asset-tests"),
+        ignore = "requires original DOS game assets"
+    )]
     #[test]
     fn scene_streams_match_original_da_decoder() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
