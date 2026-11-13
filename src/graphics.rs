@@ -658,23 +658,28 @@ enum FrameTraversalPolicy {
     Render,
 }
 
-fn visit_frame_commands<F>(
-    puzzle: &PuzzleAsset,
+#[derive(Clone, Copy)]
+struct FrameWalkState {
     frame_idx: usize,
     ox: i32,
     oy: i32,
     flags: u16,
     depth: usize,
+}
+
+fn visit_frame_commands<F>(
+    puzzle: &PuzzleAsset,
+    state: FrameWalkState,
     policy: FrameTraversalPolicy,
     visitor: &mut F,
 ) -> std::ops::ControlFlow<()>
 where
     F: FnMut(&FrameCommand, i32, i32, u16) -> std::ops::ControlFlow<()>,
 {
-    if depth > 16 {
+    if state.depth > 16 {
         return std::ops::ControlFlow::Continue(());
     }
-    let Some(SceneRecord::Frame { commands, .. }) = puzzle.records.get(frame_idx) else {
+    let Some(SceneRecord::Frame { commands, .. }) = puzzle.records.get(state.frame_idx) else {
         return std::ops::ControlFlow::Continue(());
     };
 
@@ -688,28 +693,37 @@ where
             } => {
                 // In top-level frame (`FUN_196c_17a3` line 1301), skip sub-frames with `(flags & 0xF0) == 0x30`
                 if policy == FrameTraversalPolicy::Render
-                    && depth == 0
+                    && state.depth == 0
                     && (child_flags & 0x00F0) == 0x0030
                 {
                     continue;
                 }
-                let (lx, ly) = reflect_subframe_origin(puzzle, child_idx, dx, dy, flags, depth);
+                let (lx, ly) = reflect_subframe_origin(
+                    puzzle,
+                    child_idx,
+                    dx,
+                    dy,
+                    state.flags,
+                    state.depth,
+                );
                 let combined_flags = match policy {
-                    FrameTraversalPolicy::Render => combine_frame_flags(flags, child_flags),
-                    FrameTraversalPolicy::Geometry => (flags ^ child_flags) & 3,
+                    FrameTraversalPolicy::Render => combine_frame_flags(state.flags, child_flags),
+                    FrameTraversalPolicy::Geometry => (state.flags ^ child_flags) & 3,
                 };
                 visit_frame_commands(
                     puzzle,
-                    child_idx,
-                    ox + lx,
-                    oy + ly,
-                    combined_flags,
-                    depth + 1,
+                    FrameWalkState {
+                        frame_idx: child_idx,
+                        ox: state.ox + lx,
+                        oy: state.oy + ly,
+                        flags: combined_flags,
+                        depth: state.depth + 1,
+                    },
                     policy,
                     visitor,
                 )?;
             }
-            _ => visitor(cmd, ox, oy, flags)?,
+            _ => visitor(cmd, state.ox, state.oy, state.flags)?,
         }
     }
     std::ops::ControlFlow::Continue(())
@@ -726,11 +740,13 @@ fn accumulate_frame_bounds(
     let (mut min_x, mut min_y, mut max_x, mut max_y) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
     let _ = visit_frame_commands(
         puzzle,
-        frame_idx,
-        ox,
-        oy,
-        flags,
-        depth,
+        FrameWalkState {
+            frame_idx,
+            ox,
+            oy,
+            flags,
+            depth,
+        },
         FrameTraversalPolicy::Geometry,
         &mut |cmd, cur_ox, cur_oy, _| {
             let rect = match *cmd {
@@ -772,6 +788,7 @@ fn accumulate_frame_bounds(
 
 /// Renders a `0x7ff1` scene/animation frame (`FUN_196c_14f0` & `FUN_196c_17a3`).
 /// `x_shift` corresponds to `*(int *)0x9a0` (playfield horizontal shift when toolbox is open, or `0`).
+#[expect(clippy::too_many_arguments)]
 pub fn render_scene_frame(
     fb: &mut Framebuffer,
     puzzle: &PuzzleAsset,
@@ -805,11 +822,13 @@ pub fn render_scene_frame(
 
     let _ = visit_frame_commands(
         puzzle,
-        frame_idx,
-        ox,
-        oy,
-        flags,
-        depth,
+        FrameWalkState {
+            frame_idx,
+            ox,
+            oy,
+            flags,
+            depth,
+        },
         FrameTraversalPolicy::Render,
         &mut |cmd, cur_ox, cur_oy, cur_flags| {
             match *cmd {
@@ -860,6 +879,7 @@ pub fn render_scene_frame(
 }
 
 /// Checks if a point `(test_x, test_y)` hits any non-transparent pixel in `frame_idx` (`FUN_2202_03fc`).
+#[expect(clippy::too_many_arguments)]
 pub fn hit_test_frame(
     puzzle: &PuzzleAsset,
     frame_idx: usize,
@@ -872,11 +892,13 @@ pub fn hit_test_frame(
 ) -> bool {
     visit_frame_commands(
         puzzle,
-        frame_idx,
-        ox,
-        oy,
-        flags,
-        depth,
+        FrameWalkState {
+            frame_idx,
+            ox,
+            oy,
+            flags,
+            depth,
+        },
         FrameTraversalPolicy::Geometry,
         &mut |cmd, cur_ox, cur_oy, cur_flags| {
             let hit = match *cmd {
@@ -1347,10 +1369,10 @@ mod tests {
             panic!("P11 frame");
         };
         for command in commands {
-            if let FrameCommand::Rect { color, .. } = command {
-                if *color == 0x090e {
-                    *color = 0x0e0e;
-                }
+            if let FrameCommand::Rect { color, .. } = command
+                && *color == 0x090e
+            {
+                *color = 0x0e0e;
             }
         }
         let mut flattened = Framebuffer::new();
