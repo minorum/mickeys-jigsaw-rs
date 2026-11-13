@@ -1569,3 +1569,97 @@ fn curved_cut_pieces_have_no_horizontal_bridge_or_gap_without_assets() {
         assert!(coverage.iter().all(|&n| n == 1));
     }
 }
+
+#[test]
+fn curved_cut_pieces_match_framebuffer_rasterization_without_assets() {
+    let asset = synthetic_puzzle_asset(1, false);
+    let mut ref_fb = Framebuffer::new();
+    for dim in 2..=8 {
+        let session = PuzzleSession::new(1, asset.clone(), dim, true, false, false);
+        let col_w = grid_col_widths(dim);
+        let row_h = grid_row_heights(dim);
+        let mut col_x = vec![0i32; dim + 1];
+        for c in 0..dim {
+            col_x[c + 1] = col_x[c] + col_w[c];
+        }
+        let mut row_y = vec![0i32; dim + 1];
+        for r in 0..dim {
+            row_y[r + 1] = row_y[r] + row_h[r];
+        }
+        let mut rng = LcgRng::new(1103515245u32.wrapping_add((dim as u32) * 12345));
+        let mut next_edge = || {
+            let code = rng.next() & 7;
+            (code & 3, if code < 4 { 1 } else { -1 })
+        };
+        let mut v_edges = vec![vec![(0usize, 1i32); dim + 1]; dim];
+        for row in &mut v_edges {
+            for edge in row.iter_mut().take(dim).skip(1) {
+                *edge = next_edge();
+            }
+        }
+        let mut h_edges = vec![vec![(0usize, 1i32); dim]; dim + 1];
+        for row in h_edges.iter_mut().take(dim).skip(1) {
+            for edge in row {
+                *edge = next_edge();
+            }
+        }
+
+        for p in &session.pieces {
+            let (r, c) = (p.row, p.col);
+            let (bx, by, bw, bh) = (col_x[c], row_y[r], col_w[c], row_h[r]);
+            let borders = [
+                (c > 0, true, v_edges[r][c], bx, by, -1),
+                (c + 1 < dim, true, v_edges[r][c + 1], bx + bw, by, 1),
+                (r > 0, false, h_edges[r][c], bx, by, -1),
+                (r + 1 < dim, false, h_edges[r + 1][c], bx, by + bh, 1),
+            ];
+            ref_fb.clear(0);
+            ref_fb.fill_rect(bx, by, bw, bh, 1);
+            for &(active, is_vert, (var, dir), ex, ey, out_dir) in &borders {
+                if !active {
+                    continue;
+                }
+                let (_, pts) = edge_curve(is_vert, dim, var);
+                let poly: Vec<(i32, i32)> = pts
+                    .iter()
+                    .map(|&(dx, dy)| {
+                        if is_vert {
+                            (ex + i32::from(dx) * dir, ey + i32::from(dy))
+                        } else {
+                            (ex + i32::from(dx), ey + i32::from(dy) * dir)
+                        }
+                    })
+                    .collect();
+                let fill_val = u8::from(dir == out_dir);
+                ref_fb.fill_polygon(&poly, fill_val);
+                if !is_vert && dir == 1 {
+                    let (mut x_min, mut x_max) = (i32::MAX, i32::MIN);
+                    for &(px, py) in &poly {
+                        if py == ey {
+                            x_min = x_min.min(px);
+                            x_max = x_max.max(px);
+                        }
+                    }
+                    if x_min <= x_max {
+                        ref_fb.fill_rect(x_min, ey, x_max - x_min + 1, 1, fill_val);
+                    }
+                }
+            }
+            let w = p.sprite.width as usize;
+            let h = p.sprite.sub_h as usize;
+            let opacity = p.sprite.opacity.as_ref().unwrap();
+            for dy in 0..h {
+                for dx in 0..w {
+                    let expected =
+                        ref_fb.get_pixel(p.target_x + dx as i32, p.target_y + dy as i32) != 0;
+                    assert_eq!(
+                        opacity[dy * w + dx],
+                        expected,
+                        "dim={dim} piece {} ({r},{c}) mismatch at ({dx},{dy})",
+                        p.index
+                    );
+                }
+            }
+        }
+    }
+}

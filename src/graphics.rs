@@ -271,10 +271,12 @@ impl Framebuffer {
         let len = (dx_end - dx_start) as usize;
         let dst_x0 = (x + dx_start) as usize;
         let required_len = (spr.height as usize) * stride;
-        let opacity = spr.opacity.as_deref().filter(|m| m.len() >= required_len);
-        if spr.pixels.len() < required_len {
+        if spr.pixels.len() < required_len
+            || spr.opacity.as_ref().is_some_and(|m| m.len() < required_len)
+        {
             return;
         }
+        let opacity = spr.opacity.as_deref();
 
         for dy in dy_start..dy_end {
             let py = y + dy;
@@ -343,10 +345,11 @@ impl Framebuffer {
         if spr.pixels.len() < required_len
             || sub_x + spr_w > stride
             || sub_y + spr_h > spr.height as usize
+            || spr.opacity.as_ref().is_some_and(|m| m.len() < required_len)
         {
             return;
         }
-        let opacity = spr.opacity.as_deref().filter(|m| m.len() >= required_len);
+        let opacity = spr.opacity.as_deref();
         let dw_u = dw as usize;
         let dh_u = dh as usize;
         let trans = spr.transparent_color;
@@ -533,16 +536,16 @@ pub(crate) fn rasterize_polygon(
 
     for y in min_y..=max_y {
         nodes.clear();
-        let y64 = y as i64;
+        let y128 = y as i128;
         let mut j = pts.len() - 1;
         for i in 0..pts.len() {
-            let xi = pts[i].0 as i64 + ox as i64;
-            let yi = pts[i].1 as i64 + oy as i64;
-            let xj = pts[j].0 as i64 + ox as i64;
-            let yj = pts[j].1 as i64 + oy as i64;
-            if (yi < y64 && yj >= y64) || (yj < y64 && yi >= y64) {
-                let x = xi + ((y64 - yi) * (xj - xi)) / (yj - yi);
-                nodes.push(x.clamp(i32::MIN as i64, i32::MAX as i64) as i32);
+            let xi = pts[i].0 as i128 + ox as i128;
+            let yi = pts[i].1 as i128 + oy as i128;
+            let xj = pts[j].0 as i128 + ox as i128;
+            let yj = pts[j].1 as i128 + oy as i128;
+            if (yi < y128 && yj >= y128) || (yj < y128 && yi >= y128) {
+                let x = xi + ((y128 - yi) * (xj - xi)) / (yj - yi);
+                nodes.push(x.clamp(i32::MIN as i128, i32::MAX as i128) as i32);
             }
             j = i;
         }
@@ -1822,6 +1825,19 @@ mod tests {
             7,
         );
         assert_eq!(fb.get_pixel(10, 10), 7);
+
+        fb.clear(0);
+        fb.fill_polygon_offset(
+            &[
+                (i32::MIN, i32::MIN),
+                (i32::MAX, i32::MAX),
+                (i32::MIN, i32::MAX),
+            ],
+            0,
+            -1,
+            9,
+        );
+        assert_eq!(fb.get_pixel(0, 0), 9);
     }
 
     #[test]
@@ -1856,6 +1872,22 @@ mod tests {
             opacity: None,
         };
         fb.blit_thumbnail(&oob_sub, 0, 0, 4, 4);
+        assert_eq!(fb.get_pixel(0, 0), 3);
+
+        let short_opacity = Sprite8061 {
+            stride: 4,
+            height: 4,
+            transparent_color: 0,
+            bpp: 8,
+            sub_x: 0,
+            sub_y: 0,
+            width: 4,
+            sub_h: 4,
+            pixels: vec![1; 16],
+            opacity: Some(vec![true; 8]),
+        };
+        fb.blit_thumbnail(&short_opacity, 0, 0, 4, 4);
+        fb.blit_sprite(&short_opacity, 0, 0, 0);
         assert_eq!(fb.get_pixel(0, 0), 3);
     }
 }
