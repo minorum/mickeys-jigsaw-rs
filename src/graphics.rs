@@ -650,6 +650,14 @@ fn combine_frame_flags(parent_flags: u16, cmd_flags: u16) -> u16 {
     ((parent_flags ^ local_c) & 3) | (local_c & 0xFFF0)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FrameTraversalPolicy {
+    /// Used by bounds calculation and hit-testing: visits all sub-frames and propagates only flip bits.
+    Geometry,
+    /// Used by scene rendering: skips top-level `0x0030` sub-frames and propagates high command flags.
+    Render,
+}
+
 fn visit_frame_commands<F>(
     puzzle: &PuzzleAsset,
     frame_idx: usize,
@@ -657,8 +665,7 @@ fn visit_frame_commands<F>(
     oy: i32,
     flags: u16,
     depth: usize,
-    skip_top_layer_30: bool,
-    combine_high_flags: bool,
+    policy: FrameTraversalPolicy,
     visitor: &mut F,
 ) -> std::ops::ControlFlow<()>
 where
@@ -680,14 +687,16 @@ where
                 flags: child_flags,
             } => {
                 // In top-level frame (`FUN_196c_17a3` line 1301), skip sub-frames with `(flags & 0xF0) == 0x30`
-                if skip_top_layer_30 && depth == 0 && (child_flags & 0x00F0) == 0x0030 {
+                if policy == FrameTraversalPolicy::Render
+                    && depth == 0
+                    && (child_flags & 0x00F0) == 0x0030
+                {
                     continue;
                 }
                 let (lx, ly) = reflect_subframe_origin(puzzle, child_idx, dx, dy, flags, depth);
-                let combined_flags = if combine_high_flags {
-                    combine_frame_flags(flags, child_flags)
-                } else {
-                    (flags ^ child_flags) & 3
+                let combined_flags = match policy {
+                    FrameTraversalPolicy::Render => combine_frame_flags(flags, child_flags),
+                    FrameTraversalPolicy::Geometry => (flags ^ child_flags) & 3,
                 };
                 visit_frame_commands(
                     puzzle,
@@ -696,8 +705,7 @@ where
                     oy + ly,
                     combined_flags,
                     depth + 1,
-                    skip_top_layer_30,
-                    combine_high_flags,
+                    policy,
                     visitor,
                 )?;
             }
@@ -723,8 +731,7 @@ fn accumulate_frame_bounds(
         oy,
         flags,
         depth,
-        false,
-        false,
+        FrameTraversalPolicy::Geometry,
         &mut |cmd, cur_ox, cur_oy, _| {
             let rect = match *cmd {
                 FrameCommand::Rect {
@@ -798,8 +805,7 @@ pub fn render_scene_frame(
         oy,
         flags,
         depth,
-        true,
-        true,
+        FrameTraversalPolicy::Render,
         &mut |cmd, cur_ox, cur_oy, cur_flags| {
             match *cmd {
                 FrameCommand::Rect {
@@ -866,8 +872,7 @@ pub fn hit_test_frame(
         oy,
         flags,
         depth,
-        false,
-        false,
+        FrameTraversalPolicy::Geometry,
         &mut |cmd, cur_ox, cur_oy, cur_flags| {
             let hit = match *cmd {
                 FrameCommand::Rect {
@@ -1595,5 +1600,78 @@ mod tests {
 
         fb.fill_polygon_offset(&[(-20, -30), (20, -30), (0, -5)], 0, 0, 5);
         assert!(fb.pixels.iter().all(|&p| p == 0));
+    }
+
+    #[test]
+    fn traversal_policy_distinguishes_render_and_geometry_flags() {
+        use crate::assets::{FrameCommand, PuzzleAsset, SceneRecord};
+
+        let asset = PuzzleAsset {
+            id: 0,
+            palette: [[0; 3]; 256],
+            records: vec![
+                // Record 0: top-level frame with a `0x0030` sub-frame and a `0x0720` sub-frame
+                SceneRecord::Frame {
+                    bg_frame_idx: 0,
+                    bg_color: 0,
+                    commands: vec![
+                        FrameCommand::SubFrame {
+                            dx: 0,
+                            dy: 0,
+                            frame_idx: 1,
+                            flags: 0x0030,
+                        },
+                        FrameCommand::SubFrame {
+                            dx: 0,
+                            dy: 0,
+                            frame_idx: 2,
+                            flags: 0x0720,
+                        },
+                    ],
+                },
+                // Record 1: skipped by Render at depth 0, but included by Geometry
+                SceneRecord::Frame {
+                    bg_frame_idx: 0,
+                    bg_color: 0,
+                    commands: vec![FrameCommand::Rect {
+                        x: 10,
+                        y: 10,
+                        color: 9,
+                        flags: 0,
+                        width: 4,
+                        height: 4,
+                    }],
+                },
+                // Record 2: high flags `0x0720` override rect color to `7` during Render
+                SceneRecord::Frame {
+                    bg_frame_idx: 0,
+                    bg_color: 0,
+                    commands: vec![FrameCommand::Rect {
+                        x: 20,
+                        y: 20,
+                        color: 0x0303,
+                        flags: 0,
+                        width: 4,
+                        height: 4,
+                    }],
+                },
+            ],
+            sequences: Vec::new(),
+            hotspots: Vec::new(),
+            full_anim_seq_idx: 0,
+            sounds: Vec::new(),
+            sprites: Vec::new(),
+        };
+
+        // Geometry includes both the `0x0030` sub-frame at (10,10) and the `0x0720` sub-frame at (20,20)
+        assert_eq!(compute_frame_bounds(&asset, 0, 0, 0, 0, 0), (10, 10, 14, 14));
+        assert!(hit_test_frame(&asset, 0, 0, 0, 0, 11, 11, 0));
+        assert!(hit_test_frame(&asset, 0, 0, 0, 0, 21, 21, 0));
+
+        // Render skips the `0x0030` sub-frame at depth 0 and propagates `0x0720` color override (`7`)
+        let mut fb = Framebuffer::new();
+        render_scene_frame(&mut fb, &asset, 0, 0, 0, 0, false, 0, 0);
+        assert_eq!(fb.get_pixel(11, 11), 0);
+        assert_eq!(fb.get_pixel(21, 21), 7);
     }
 }

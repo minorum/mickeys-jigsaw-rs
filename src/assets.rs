@@ -32,14 +32,18 @@ fn read_tagged_chunk<'a>(
     pos: &mut usize,
     err: &str,
 ) -> Result<(&'a [u8], &'a [u8]), String> {
-    let tag = &buf[*pos..*pos + 4];
-    let size = le_u32(buf, *pos + 4) as usize;
-    *pos += 8;
-    let end = pos
+    let header_end = pos
+        .checked_add(8)
+        .filter(|&end| end <= buf.len())
+        .ok_or_else(|| err.to_string())?;
+    let header = buf.get(*pos..header_end).ok_or_else(|| err.to_string())?;
+    let tag = &header[0..4];
+    let size = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
+    let end = header_end
         .checked_add(size)
         .filter(|&end| end <= buf.len())
         .ok_or_else(|| err.to_string())?;
-    let chunk = &buf[*pos..end];
+    let chunk = buf.get(header_end..end).ok_or_else(|| err.to_string())?;
     *pos = end;
     Ok((tag, chunk))
 }
@@ -1494,5 +1498,35 @@ mod tests {
         for (selected, original) in selected.sprites.iter().zip(&vga.sprites) {
             assert_eq!(selected.pixels, original.pixels);
         }
+    }
+
+    #[test]
+    fn read_tagged_chunk_rejects_truncated_headers_and_oversized_lengths() {
+        for len in 0..8 {
+            let short = vec![0u8; len];
+            let mut pos = 0usize;
+            assert!(read_tagged_chunk(&short, &mut pos, "truncated").is_err());
+            assert_eq!(pos, 0);
+        }
+
+        let mut past_end_pos = 4usize;
+        let buf = b"PALE\x00\x00\x00\x00";
+        assert!(read_tagged_chunk(buf, &mut past_end_pos, "truncated").is_err());
+        assert_eq!(past_end_pos, 4);
+
+        let mut oversized = b"PALE".to_vec();
+        oversized.extend_from_slice(&u32::MAX.to_le_bytes());
+        let mut pos = 0usize;
+        assert!(read_tagged_chunk(&oversized, &mut pos, "oversized").is_err());
+        assert_eq!(pos, 0);
+
+        let mut valid = b"PALE".to_vec();
+        valid.extend_from_slice(&3u32.to_le_bytes());
+        valid.extend_from_slice(&[1, 2, 3]);
+        let mut pos = 0usize;
+        let (tag, chunk) = read_tagged_chunk(&valid, &mut pos, "valid").unwrap();
+        assert_eq!(tag, b"PALE");
+        assert_eq!(chunk, &[1, 2, 3]);
+        assert_eq!(pos, valid.len());
     }
 }
