@@ -6,7 +6,8 @@ use crate::graphics::{
     render_scene_frame, render_scene_view_with_scratch,
 };
 use crate::puzzle::{
-    AnimationPlayer, PLAYFIELD_H, PLAYFIELD_W, PuzzleSession, TOOLBOX_W, dissolve_progress,
+    AnimationPlayer, PLAYFIELD_H, PLAYFIELD_W, PuzzleSession, TOOLBOX_W, ToolboxTarget,
+    dissolve_progress,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -16,6 +17,8 @@ struct UiColors {
     gray: u8,
     card: u8,
     hover: u8,
+    hi: u8,
+    lo: u8,
     yellow: u8,
     red: u8,
     board_bg: u8,
@@ -29,6 +32,8 @@ impl UiColors {
             gray: fb.color_index([48; 3]),
             card: fb.color_index([85, 85, 85]),
             hover: fb.color_index([170, 170, 170]),
+            hi: fb.color_index([220, 220, 228]),
+            lo: fb.color_index([40, 40, 48]),
             yellow: fb.color_index([255, 255, 85]),
             red: fb.color_index([255, 0, 0]),
             board_bg: fb.color_index([204, 204, 187]),
@@ -48,7 +53,8 @@ struct ToolboxCacheKey {
     session_id: u64,
     asset_rev: u64,
     tray_rev: u64,
-    hovered_slot: Option<usize>,
+    hovered_target: Option<ToolboxTarget>,
+    pressed_target: Option<ToolboxTarget>,
 }
 
 const TOOLBOX_STRIP_W: usize = (TOOLBOX_W - 2) as usize;
@@ -98,7 +104,9 @@ fn build_guide_playfield(full_picture_fb: &Framebuffer, board_bg: u8, out: &mut 
 /// replacements or video-mode switches.
 pub struct PuzzleRenderer {
     synced_asset: Option<(u64, u64)>,
+    synced_tbx: Option<(u64, u64)>,
     ui_colors: UiColors,
+    tbx_remap: [u8; 256],
     guide_playfield: Vec<[u8; 4]>,
     scratch_fb: Box<Framebuffer>,
     dissolve_prev_fb: Box<Framebuffer>,
@@ -120,7 +128,9 @@ impl PuzzleRenderer {
     pub fn new() -> Self {
         Self {
             synced_asset: None,
+            synced_tbx: None,
             ui_colors: UiColors::default(),
+            tbx_remap: [0u8; 256],
             guide_playfield: Vec::new(),
             scratch_fb: Box::new(Framebuffer::new()),
             dissolve_prev_fb: Box::new(Framebuffer::new()),
@@ -200,7 +210,13 @@ impl PuzzleRenderer {
 
             // Draw playfield background and decorative border (`FUN_1b43_0363`)
             board.fill_rect(pfx, pfy, PLAYFIELD_W, PLAYFIELD_H, colors.board_bg);
-            draw_playfield_border(&mut board, tbx, pfx - 2, PLAYFIELD_W + 2);
+            draw_playfield_border_remapped(
+                &mut board,
+                tbx,
+                pfx - 2,
+                PLAYFIELD_W + 2,
+                &self.tbx_remap,
+            );
 
             // Draw Grid Lines if enabled (`FUN_1b43_0448`)
             if session.grid_lines {
@@ -281,24 +297,33 @@ impl PuzzleRenderer {
         &self.board_fb.as_ref().unwrap().1
     }
 
-    fn sync_asset(&mut self, session: &PuzzleSession) {
+    fn sync_asset(&mut self, session: &PuzzleSession, tbx: Option<&ToolboxAsset>) {
         let key = (session.session_id(), session.asset_rev());
-        if self.synced_asset == Some(key) {
-            return;
+        if self.synced_asset != Some(key) {
+            let full_picture_fb = &session.full_picture_fb;
+            self.ui_colors = UiColors::from_framebuffer(full_picture_fb);
+            build_guide_playfield(
+                full_picture_fb,
+                self.ui_colors.board_bg,
+                &mut self.guide_playfield,
+            );
+            self.synced_asset = Some(key);
+            self.synced_tbx = None;
         }
-        let full_picture_fb = &session.full_picture_fb;
-        self.ui_colors = UiColors::from_framebuffer(full_picture_fb);
-        build_guide_playfield(
-            full_picture_fb,
-            self.ui_colors.board_bg,
-            &mut self.guide_playfield,
-        );
-        self.synced_asset = Some(key);
+        if let Some(tbx) = tbx
+            && self.synced_tbx != Some(key)
+        {
+            let full_picture_fb = &session.full_picture_fb;
+            for (i, &rgb) in tbx.palette.iter().enumerate() {
+                self.tbx_remap[i] = full_picture_fb.color_index(rgb);
+            }
+            self.synced_tbx = Some(key);
+        }
     }
 
     /// Renders the static full-picture reference view (`Tab` / Reference button).
     pub fn render_reference(&mut self, session: &PuzzleSession, fb: &mut Framebuffer) {
-        self.sync_asset(session);
+        self.sync_asset(session, None);
         fb.palette = session.asset.palette;
         fb.reset_clip();
         fb.clear(self.ui_colors.black);
@@ -317,7 +342,7 @@ impl PuzzleRenderer {
         if session.solved || session.grid_dim == 1 || session.active_anim.is_some() {
             return;
         }
-        self.sync_asset(session);
+        self.sync_asset(session, None);
         let mask_key = BoardStateKey {
             session_id: session.session_id(),
             asset_rev: session.asset_rev(),
@@ -425,7 +450,7 @@ impl PuzzleRenderer {
         pointer_x: i32,
         pointer_y: i32,
     ) {
-        self.sync_asset(session);
+        self.sync_asset(session, Some(tbx));
         let asset = &session.asset;
         fb.reset_clip();
         fb.palette = asset.palette;
@@ -441,10 +466,16 @@ impl PuzzleRenderer {
         if session.solved {
             fb.clear(colors.black);
             copy_scene_interior(fb, &session.full_picture_fb, SCENE_OFFSET_X + 2);
-            draw_playfield_border(fb, tbx, SCENE_OFFSET_X, PLAYFIELD_W + 2);
+            draw_playfield_border_remapped(
+                fb,
+                tbx,
+                SCENE_OFFSET_X,
+                PLAYFIELD_W + 2,
+                &self.tbx_remap,
+            );
             // Draw subtle menu tab icon in top-left corner (`tbx.sprites[49]` or outline)
             if let Some(icon) = tbx.sprites.get(49) {
-                fb.blit_sprite(icon, 2, 2, 0);
+                fb.blit_sprite_remapped(icon, 2, 2, 0, &self.tbx_remap);
             }
             if let Some(status) = session.status_message() {
                 fb.draw_text_shadowed(font, status, 40, 6, colors.black, colors.yellow);
@@ -479,7 +510,34 @@ impl PuzzleRenderer {
         }
 
         if session.toolbox_open {
-            self.ensure_toolbox(session, fb, font, pointer_x, pointer_y);
+            self.ensure_toolbox(session, fb, tbx, font, pointer_x, pointer_y);
+        } else {
+            let hovered =
+                session.toolbox_target_at(pointer_x, pointer_y) == Some(ToolboxTarget::ClosedTab);
+            let pressed = session.pressed_toolbox_target == Some(ToolboxTarget::ClosedTab);
+            if let Some(icon) = tbx.sprites.get(49) {
+                fb.blit_sprite_remapped(icon, 2, 2, 0, &self.tbx_remap);
+            } else {
+                draw_beveled_box(
+                    fb,
+                    2,
+                    2,
+                    16,
+                    13,
+                    colors.card,
+                    colors.hi,
+                    colors.lo,
+                    pressed,
+                    hovered,
+                    colors.yellow,
+                    colors.white,
+                );
+            }
+            if pressed {
+                fb.draw_rect_outline(2, 2, 16, 13, colors.white);
+            } else if hovered {
+                fb.draw_rect_outline(2, 2, 16, 13, colors.yellow);
+            }
         }
 
         // Draw status message if active
@@ -541,7 +599,13 @@ impl PuzzleRenderer {
                 asset.uses_ega(),
                 progress,
             );
-            draw_playfield_border(fb, tbx, SCENE_OFFSET_X, PLAYFIELD_W + 2);
+            draw_playfield_border_remapped(
+                fb,
+                tbx,
+                SCENE_OFFSET_X,
+                PLAYFIELD_W + 2,
+                &self.tbx_remap,
+            );
             draw_anim_bubble(fb, asset, font, bubble);
         } else {
             let key = AnimFrameCacheKey {
@@ -568,7 +632,13 @@ impl PuzzleRenderer {
                     asset,
                     anim.cur_frame,
                 );
-                draw_playfield_border(&mut cached, tbx, SCENE_OFFSET_X, PLAYFIELD_W + 2);
+                draw_playfield_border_remapped(
+                    &mut cached,
+                    tbx,
+                    SCENE_OFFSET_X,
+                    PLAYFIELD_W + 2,
+                    &self.tbx_remap,
+                );
                 draw_anim_bubble(&mut cached, asset, font, key.bubble);
                 self.anim_fb = Some((key, cached));
             }
@@ -591,16 +661,19 @@ impl PuzzleRenderer {
         &mut self,
         session: &PuzzleSession,
         fb: &mut Framebuffer,
+        tbx: &ToolboxAsset,
         font: &FontAsset,
         pointer_x: i32,
         pointer_y: i32,
     ) {
-        let hovered_slot = session.hovered_tray_slot(pointer_x, pointer_y);
+        let hovered_target = session.toolbox_target_at(pointer_x, pointer_y);
+        let pressed_target = session.pressed_toolbox_target;
         let key = ToolboxCacheKey {
             session_id: session.session_id(),
             asset_rev: session.asset_rev(),
             tray_rev: session.tray_rev(),
-            hovered_slot,
+            hovered_target,
+            pressed_target,
         };
         if let Some((cached_key, strip)) = &self.toolbox_strip
             && *cached_key == key
@@ -613,7 +686,7 @@ impl PuzzleRenderer {
             }
             return;
         }
-        self.render_toolbox(session, fb, font, hovered_slot);
+        self.render_toolbox(session, fb, tbx, font, hovered_target, pressed_target);
         let mut strip = self
             .toolbox_strip
             .take()
@@ -632,19 +705,80 @@ impl PuzzleRenderer {
         &self,
         session: &PuzzleSession,
         fb: &mut Framebuffer,
+        tbx: &ToolboxAsset,
         font: &FontAsset,
-        hovered_slot: Option<usize>,
+        hovered_target: Option<ToolboxTarget>,
+        pressed_target: Option<ToolboxTarget>,
     ) {
         let colors = self.ui_colors;
         fb.fill_rect(0, 0, TOOLBOX_W - 2, SCREEN_H, colors.black);
+        if let Some(bg) = tbx.sprites.get(4) {
+            let bw = bg.width.max(1) as i32;
+            let bh = bg.height.max(1) as i32;
+            fb.set_clip(2, 0, TOOLBOX_W - 4, SCREEN_H);
+            let mut ty = 0;
+            while ty < SCREEN_H {
+                let mut tx = 2;
+                while tx < TOOLBOX_W - 2 {
+                    fb.blit_sprite_remapped(bg, tx, ty, 0, &self.tbx_remap);
+                    tx += bw;
+                }
+                ty += bh;
+            }
+            fb.reset_clip();
+        }
 
         // Top menu button (`y = 2..16`)
-        fb.fill_rect(2, 2, TOOLBOX_W - 6, 14, colors.card);
-        fb.draw_text(font, "MENU", 8, 4, colors.white);
+        let menu_hovered = hovered_target == Some(ToolboxTarget::Menu);
+        let menu_pressed = pressed_target == Some(ToolboxTarget::Menu);
+        draw_beveled_box(
+            fb,
+            2,
+            2,
+            TOOLBOX_W - 6,
+            14,
+            if menu_hovered && !menu_pressed {
+                colors.hover
+            } else {
+                colors.card
+            },
+            colors.hi,
+            colors.lo,
+            menu_pressed,
+            menu_hovered,
+            colors.yellow,
+            colors.white,
+        );
+        if let Some(icon) = tbx.sprites.get(49) {
+            fb.blit_sprite_remapped(icon, 3, 2, 0, &self.tbx_remap);
+            fb.draw_text(font, "MENU", 20, 4, colors.white);
+        } else {
+            fb.draw_text(font, "MENU", 8, 4, colors.white);
+        }
 
         // Up arrow (`y = 18..29`)
-        fb.fill_rect(2, 18, TOOLBOX_W - 6, 11, colors.card);
-        let up_color = if session.tray_scroll > 0 {
+        let up_enabled = session.tray_scroll > 0;
+        let up_hovered = up_enabled && hovered_target == Some(ToolboxTarget::ScrollUp);
+        let up_pressed = up_enabled && pressed_target == Some(ToolboxTarget::ScrollUp);
+        draw_beveled_box(
+            fb,
+            2,
+            18,
+            TOOLBOX_W - 6,
+            11,
+            if up_hovered && !up_pressed {
+                colors.hover
+            } else {
+                colors.card
+            },
+            colors.hi,
+            colors.lo,
+            up_pressed,
+            up_hovered,
+            colors.yellow,
+            colors.white,
+        );
+        let up_color = if up_enabled {
             colors.white
         } else {
             colors.black
@@ -654,13 +788,33 @@ impl PuzzleRenderer {
         }
 
         // Down arrow (`y = 187..198`)
-        fb.fill_rect(2, 187, TOOLBOX_W - 6, 11, colors.card);
-        let down_color =
-            if session.tray_scroll + session.visible_tray_slots() < session.tray_order.len() {
-                colors.white
+        let down_enabled =
+            session.tray_scroll + session.visible_tray_slots() < session.tray_order.len();
+        let down_hovered = down_enabled && hovered_target == Some(ToolboxTarget::ScrollDown);
+        let down_pressed = down_enabled && pressed_target == Some(ToolboxTarget::ScrollDown);
+        draw_beveled_box(
+            fb,
+            2,
+            187,
+            TOOLBOX_W - 6,
+            11,
+            if down_hovered && !down_pressed {
+                colors.hover
             } else {
-                colors.black
-            };
+                colors.card
+            },
+            colors.hi,
+            colors.lo,
+            down_pressed,
+            down_hovered,
+            colors.yellow,
+            colors.white,
+        );
+        let down_color = if down_enabled {
+            colors.white
+        } else {
+            colors.black
+        };
         for row in 0..4 {
             fb.draw_line(23 - row, 194 - row, 23 + row, 194 - row, down_color);
         }
@@ -674,18 +828,65 @@ impl PuzzleRenderer {
             if let Some(&pidx) = session.tray_order.get(tray_idx) {
                 let piece = &session.pieces[pidx];
                 let slot_y = 30 + slot as i32 * slot_h;
-                let hovered = hovered_slot == Some(slot);
-                fb.fill_rect(
+                let hovered = hovered_target == Some(ToolboxTarget::TraySlot(slot));
+                let pressed = pressed_target == Some(ToolboxTarget::TraySlot(slot));
+                draw_beveled_box(
+                    fb,
                     2,
                     slot_y + 1,
                     TOOLBOX_W - 6,
                     slot_h - 2,
-                    if hovered { colors.hover } else { colors.card },
+                    if hovered && !pressed {
+                        colors.hover
+                    } else {
+                        colors.card
+                    },
+                    colors.hi,
+                    colors.lo,
+                    pressed,
+                    hovered,
+                    colors.yellow,
+                    colors.white,
                 );
                 fb.blit_thumbnail(&piece.sprite, 3, slot_y + 2, TOOLBOX_W - 8, slot_h - 4);
             }
         }
         fb.reset_clip();
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_beveled_box(
+    fb: &mut Framebuffer,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    fill: u8,
+    hi: u8,
+    lo: u8,
+    pressed: bool,
+    hovered: bool,
+    hover_border: u8,
+    press_border: u8,
+) {
+    fb.fill_rect(x, y, w, h, fill);
+    if pressed {
+        fb.draw_rect_outline(x, y, w, h, press_border);
+        if w > 2 && h > 2 {
+            fb.draw_line(x + 1, y + 1, x + w - 2, y + 1, lo);
+            fb.draw_line(x + 1, y + 1, x + 1, y + h - 2, lo);
+            fb.draw_line(x + 1, y + h - 2, x + w - 2, y + h - 2, hi);
+            fb.draw_line(x + w - 2, y + 1, x + w - 2, y + h - 2, hi);
+        }
+    } else {
+        fb.draw_line(x, y, x + w - 1, y, hi);
+        fb.draw_line(x, y, x, y + h - 1, hi);
+        fb.draw_line(x, y + h - 1, x + w - 1, y + h - 1, lo);
+        fb.draw_line(x + w - 1, y, x + w - 1, y + h - 1, lo);
+        if hovered {
+            fb.draw_rect_outline(x, y, w, h, hover_border);
+        }
     }
 }
 
