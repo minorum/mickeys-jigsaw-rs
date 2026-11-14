@@ -1382,7 +1382,14 @@ fn perf_benchmark() {
         let anchor = &session.pieces[0];
         let ax = mx - anchor.base_w / 2 + held_bounds.0;
         let ay = my - anchor.base_h / 2 + held_bounds.1;
-        black_box((ax, ay, anchor_cell, &layer_board[0], &layer_tbx[0], &layer_held[0]));
+        black_box((
+            ax,
+            ay,
+            anchor_cell,
+            &layer_board[0],
+            &layer_tbx[0],
+            &layer_held[0],
+        ));
     }
     let drag_cpu_cache_hit = t_drag_cache_hit.elapsed();
 
@@ -1394,9 +1401,7 @@ fn perf_benchmark() {
     let mut sw_board_tex = sw_creator
         .create_texture_static(sdl3::pixels::PixelFormat::RGBA32, 320, 200)
         .unwrap();
-    sw_board_tex
-        .update(None, &layer_board, 320 * 4)
-        .unwrap();
+    sw_board_tex.update(None, &layer_board, 320 * 4).unwrap();
     let mut sw_tbx_tex = sw_creator
         .create_texture_static(
             sdl3::pixels::PixelFormat::RGBA32,

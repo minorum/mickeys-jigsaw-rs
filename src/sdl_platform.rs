@@ -876,11 +876,9 @@ pub fn run(mut app: GameApp) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
 
         // Enforce a real minimum frame interval when vsync is unavailable
-        if let Some(sleep_dur) = compute_frame_sleep(
-            last_frame.elapsed(),
-            FALLBACK_FRAME_INTERVAL,
-            vsync_enabled,
-        ) {
+        if let Some(sleep_dur) =
+            compute_frame_sleep(last_frame.elapsed(), FALLBACK_FRAME_INTERVAL, vsync_enabled)
+        {
             std::thread::sleep(sleep_dur);
         }
     }
