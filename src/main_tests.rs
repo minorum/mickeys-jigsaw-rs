@@ -1048,10 +1048,10 @@ fn setup_reports_save_failure_and_ignores_outside_clicks() {
     let mut setup = SetupMenu::new(Preferences::default());
     let original_text = setup.prefs.text_msg_on;
     setup.selected_row = 5;
-    assert!(!setup.activate_or_cycle(1, Path::new("/dev/null")));
+    assert!(!setup.activate_or_cycle(Path::new("/dev/null")));
     assert_eq!(setup.prefs.text_msg_on, original_text ^ 1);
     setup.selected_row = setup.num_rows() - 1;
-    assert!(!setup.activate_or_cycle(1, Path::new("/dev/null")));
+    assert!(!setup.activate_or_cycle(Path::new("/dev/null")));
     assert!(setup.error.is_some());
     let before = setup.prefs;
     setup.handle_click(-1, 32, Path::new("/dev/null"));
@@ -1651,4 +1651,15 @@ fn reference_signature_invalidates_across_replaced_sessions_and_assets_without_a
     let mut fresh = AppRenderer::new();
     assert!(fresh.render_if_needed(&app, 100, 100, true, false));
     assert_eq!(renderer.rgba_buf, fresh.rgba_buf);
+}
+
+#[test]
+fn title_escape_skips_directly_to_browser() {
+    let mut app = synthetic_app();
+    app.screen = AppScreen::Title;
+    app.handle_input(&AppInput {
+        escape: true,
+        ..Default::default()
+    });
+    assert_eq!(app.screen, AppScreen::Browser);
 }

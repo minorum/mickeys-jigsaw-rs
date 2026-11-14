@@ -440,12 +440,12 @@ impl GameApp {
 
     pub fn exit_setup(&mut self, return_to_playing: bool) {
         self.sync_prefs_from_setup();
-        self.screen = if return_to_playing && self.session.is_some() {
+        let next = if return_to_playing && self.session.is_some() {
             AppScreen::Playing
         } else {
             AppScreen::Browser
         };
-        self.bump_rev();
+        self.set_screen(next);
     }
 
     pub fn handle_input(&mut self, input: &AppInput) {
@@ -472,7 +472,14 @@ impl GameApp {
 
         match self.screen {
             AppScreen::Title => {
-                if input.left_pressed || input.space || input.enter || self.screen_timer > 8.0 {
+                if input.escape {
+                    self.set_screen(AppScreen::Browser);
+                    self.screen_timer = 0.0;
+                } else if input.left_pressed
+                    || input.space
+                    || input.enter
+                    || self.screen_timer > 8.0
+                {
                     let next = if self.credit_images.is_empty() {
                         AppScreen::Browser
                     } else {
@@ -509,10 +516,10 @@ impl GameApp {
                     self.exit_setup(return_to_playing);
                 } else {
                     let done = if input.left {
-                        self.setup_menu.activate_or_cycle(-1, &self.game_dir);
+                        self.setup_menu.activate_or_cycle(&self.game_dir);
                         false
                     } else if input.right || input.enter || input.space {
-                        self.setup_menu.activate_or_cycle(1, &self.game_dir)
+                        self.setup_menu.activate_or_cycle(&self.game_dir)
                     } else if input.left_pressed {
                         self.setup_menu.handle_click(
                             input.pointer_x,

@@ -41,17 +41,13 @@ fn window_conf() -> Conf {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_desktop_hud(
     session: &PuzzleSession,
-    win_w: f32,
-    win_h: f32,
+    (win_w, win_h): (f32, f32),
     reference: &Texture2D,
     cached_ref_key: &mut Option<(u64, u64)>,
     rgba_buf: &mut [u8],
-    reference_button: Rect,
-    reference_hovered: bool,
-    show_reference: bool,
+    (reference_button, reference_hovered, show_reference): (Rect, bool, bool),
 ) {
     let ink = Color::from_hex(0xf5edd8);
     let muted = Color::from_hex(0xb2c4ca);
@@ -279,14 +275,11 @@ async fn main() {
             if let Some(session) = &app.session {
                 render_desktop_hud(
                     session,
-                    win_w,
-                    win_h,
+                    (win_w, win_h),
                     &reference,
                     &mut cached_ref_key,
                     &mut renderer.rgba_buf,
-                    reference_button,
-                    reference_hovered,
-                    show_reference,
+                    (reference_button, reference_hovered, show_reference),
                 );
             }
         } else if app.screen == AppScreen::Playing
