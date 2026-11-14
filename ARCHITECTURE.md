@@ -151,12 +151,24 @@ Each resource in `MJP.TTL` and `MJP.CRD` is an Electronic Arts IFF `FORM` -> `IL
 
 ---
 
-## 6. Rust Project Structure
+## 6. Rust Project Structure (Modular Bevy + SDL3 Architecture)
 
-- [`src/decompress.rs`](file:///home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN/src/decompress.rs): `dA\0\0` LZ77+Huffman decompressor, multi-resource container reader, and IFF `ILBM` parser.
-- [`src/assets.rs`](file:///home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN/src/assets.rs): Loaders for `MJP.NFT`, `MJP.TTL`, `MJP.CRD`, `MJP.TBX`, `P01..P15.PZ8`/`.PZ4`, `P01..P15.PRT`, `.ESS`, `.NNV`, `.ISS`, and `MJP.PRE`.
-- [`src/graphics.rs`](file:///home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN/src/graphics.rs): `320x200` indexed-color framebuffer, VGA/EGA/Tandy/CGA palettes, sprite blitter with flip X/Y, `0x7ff1` recursive scene-graph renderer, polygon fill/outline renderer, and `MJP.NFT` proportional text renderer.
-- [`src/audio.rs`](file:///home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN/src/audio.rs): `.NNV` speech/SFX decoder & synthesizer (`9,321.73 Hz`) and `.ISS` EMI 5.10 music synthesizer (`268.0103 Hz`).
-- [`src/puzzle.rs`](file:///home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN/src/puzzle.rs): Jigsaw grid & interlocking curve generator, piece cutting/masking, toolbox UI, drag/drop/snapping, F1 hint, F2 solve, timer, completion animations, interactive hotspots, scene speech/SFX, and `.PRT` image export.
-- [`src/setup.rs`](file:///home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN/src/setup.rs): Authentic 80x25 DOS Setup screens (System, Sound, Sound Blaster, Printer, Joystick) and `MJP.PRE` configuration loader/saver.
-- [`src/main.rs`](file:///home/minorum/projekty/Mickeys-Jigsaw-Puzzles_DOS_EN/src/main.rs): Application loop, windowing, input handling, audio playback, CLI arguments (`/S` setup mode, etc.), and test suite.
+The Rust recreation separates platform/rendering (`sdl3`, `rodio`) from authoritative gameplay (`bevy_app`, `bevy_ecs`, `bevy_state`, `bevy_time`, `bevy_math`):
+
+- **Application Lifecycle & Scheduling (`src/app.rs`, `src/ecs/plugins.rs`)**:
+  - SDL3 owns the OS window, GPU/streaming textures, audio device loop, and raw platform events (`src/sdl_platform.rs`, `src/input.rs`), calling `step_app(&mut app, &input)` (`App::update()`) once per frame.
+  - `CoreGamePlugin`, `AudioSyncPlugin`, `BrowserPlugin`, `SetupPlugin`, `PuzzlePlugin`, and `RenderTrackingPlugin` organize systems into chained `GameSet` stages (`GlobalAndScreenTransitions`, `MenuAndBrowserInput`, `PuzzleTimersAndAnimation`, `PuzzleInputAndActions`, `PuzzleCompletion`, `SyncAndChangeTracking`).
+- **State Machine (`bevy_state`)**:
+  - `AppScreen` (`Title`, `Credits { page }`, `Browser`, `Setup { return_to_playing }`, `Playing`) is a `bevy_state::state::States` state machine. `flush_state_transitions_system` in `PostUpdate` ensures same-frame `NextState<AppScreen>` transitions and `OnEnter`/`OnExit` hooks.
+- **Timing Model (`bevy_time`)**:
+  - `TimeUpdateStrategy::ManualDuration` feeds deterministic frame `dt` into `Time<Real>` and `Time<Virtual>`.
+  - `sync_virtual_time_pause_system` pauses `Time<Virtual>` outside `Playing` or while `InGameMenuState` / confirmation prompts are open, preserving DOS pause semantics for puzzle timers and animations, while `Time<Real>` drives UI status/hint countdowns and `AudioEngine`.
+- **Single-Source-of-Truth ECS Data Model (`src/ecs/components.rs`, `src/ecs/resources.rs`)**:
+  - Each puzzle piece is an entity with `PieceIdentity`, `PieceGeometry`, `PieceEdges`, `PieceSprite`, and a single authoritative `PieceLocation` (`Tray { order }`, `Board { row, col }`, or `Held { is_anchor, group_offset, group_order }`), eliminating duplicate `board_cells`, `tray_order`, `held_piece`, and `placed` flags.
+  - Interactive scene hotspots (`SceneHotspot`), active completion/character animations (`AnimationState`), and hint highlights (`HintHighlight`) are independent entities.
+  - `track_render_changes_system` derives `RenderVersions` (`app_rev`, `board_rev`, `tray_rev`, `visual_rev`) from ECS change detection and authoritative entity hashes rather than manual `bump_*` counters.
+- **Parametric Bézier Jigsaw Geometry (`src/puzzle.rs`, `src/ecs/puzzle_ops.rs`)**:
+  - `edge_curve` generates deterministic interlocking tab/socket polylines from a canonical cubic-Bézier profile evaluated with `bevy_math::Vec2`, scaled/reflected per variant and shared across adjacent pieces so cuts partition the playfield with zero gaps or overlaps.
+- **Audio & Asset Backends (`src/audio.rs`, `src/assets.rs`, `src/decompress.rs`, `src/graphics.rs`, `src/puzzle_render.rs`)**:
+  - `AudioEngine` (`rodio`) is stored as a `NonSend` resource, updated in `PreUpdate`, synced to `AudioStatus`, and driven via `AudioCommand` messages drained in `PostUpdate`.
+  - `AppRenderer` and `PuzzleRenderer` extract read-only render state from `&World` / `&mut World` into the `320x200` indexed framebuffer and RGBA texture for SDL3 presentation.

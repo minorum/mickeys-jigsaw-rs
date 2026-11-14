@@ -3,6 +3,9 @@
 
 use std::time::{Duration, Instant};
 
+use bevy_app::App;
+use bevy_ecs::prelude::World;
+use bevy_state::prelude::State;
 use sdl3::event::Event;
 use sdl3::keyboard::Keycode;
 use sdl3::mouse::MouseButton;
@@ -10,12 +13,19 @@ use sdl3::pixels::{Color, PixelFormat};
 use sdl3::render::{BlendMode, Canvas, FPoint, FRect, ScaleMode, Texture, TextureCreator};
 use sdl3::video::{Window, WindowContext};
 
-use crate::app::{AppRenderer, AppScreen, GameApp};
+use crate::app::{AppRenderer, AppScreen, app_screen, has_mickey_cursor, should_exit, step_app};
+use crate::ecs::components::{
+    AnimationState, HintHighlight, PieceGeometry, PieceIdentity, PieceLocation,
+};
+use crate::ecs::resources::{
+    ActivePuzzle, AudioStatus, GameConfig, InGameMenuState, RenderVersions, ScreenState,
+    StaticAssets,
+};
 use crate::graphics::{SCREEN_H, SCREEN_W};
 use crate::input::{
     InputDeviceKind, InputKey, InputRouter, PlatformEvent, PointerButton, ViewportTransform,
 };
-use crate::puzzle::{PuzzleSession, ToolboxTarget};
+use crate::puzzle::ToolboxTarget;
 
 const SDL_TOUCH_MOUSEID: u32 = sdl3::sys::touch::SDL_TOUCH_MOUSEID.0;
 const FALLBACK_FRAME_INTERVAL: Duration = Duration::from_nanos(16_666_667);
@@ -66,6 +76,7 @@ struct HintTexKey {
     session_id: u64,
     asset_rev: u64,
     hint_idx: usize,
+    playfield_x: i32,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -101,7 +112,7 @@ struct SdlGameRenderer<'a> {
 }
 
 impl<'a> SdlGameRenderer<'a> {
-    fn new(creator: &'a TextureCreator<WindowContext>, app: &GameApp) -> SdlResult<Self> {
+    fn new(creator: &'a TextureCreator<WindowContext>, world: &World) -> SdlResult<Self> {
         let mut base_tex = creator.create_texture_streaming(
             PixelFormat::RGBA32,
             SCREEN_W as u32,
@@ -122,7 +133,7 @@ impl<'a> SdlGameRenderer<'a> {
         let mut cursor_texs = [None, None, None];
         for (slot, sprite_idx) in [62usize, 63, 64].into_iter().enumerate() {
             if let Some((w, h)) =
-                AppRenderer::render_cursor_rgba(app, sprite_idx, &mut scratch_rgba)
+                AppRenderer::render_cursor_rgba(world, sprite_idx, &mut scratch_rgba)
             {
                 let mut tex =
                     creator.create_texture_static(PixelFormat::RGBA32, w as u32, h as u32)?;
@@ -179,7 +190,7 @@ impl<'a> SdlGameRenderer<'a> {
     fn render_frame(
         &mut self,
         canvas: &mut Canvas<Window>,
-        app: &GameApp,
+        world: &mut World,
         app_renderer: &mut AppRenderer,
         tf: &ViewportTransform,
         mx: i32,
@@ -207,29 +218,31 @@ impl<'a> SdlGameRenderer<'a> {
         canvas.set_draw_color(Color::RGB(0x26, 0x36, 0x40));
         canvas.clear();
 
-        let interactive_board = app.screen == AppScreen::Playing
+        let screen = *world.resource::<State<AppScreen>>().get();
+        let in_game_menu_open = world.resource::<InGameMenuState>().open;
+        let puzzle_solved = world
+            .resource::<ActivePuzzle>()
+            .0
+            .as_ref()
+            .is_some_and(|p| p.solved);
+        let has_active_anim = world
+            .query::<&AnimationState>()
+            .iter(world)
+            .next()
+            .is_some();
+        let interactive_board = screen == AppScreen::Playing
             && !show_reference
-            && !app.in_game_menu_open
-            && app
-                .session
-                .as_ref()
-                .is_some_and(|s| !s.solved && s.active_anim.is_none());
+            && !in_game_menu_open
+            && world.resource::<ActivePuzzle>().0.is_some()
+            && !puzzle_solved
+            && !has_active_anim;
 
-        if interactive_board && let Some(sess) = &app.session {
-            self.render_interactive_board(
-                canvas,
-                app,
-                sess,
-                app_renderer,
-                tf,
-                mx,
-                my,
-                picture_guide,
-            )?;
+        if interactive_board {
+            self.render_interactive_board(canvas, world, app_renderer, tf, mx, my, picture_guide)?;
             self.last_rendered_interactive = true;
         } else {
             let uploaded =
-                app_renderer.render_base_only(app, mx, my, show_reference, picture_guide);
+                app_renderer.render_base_only(world, mx, my, show_reference, picture_guide);
             if uploaded || self.last_rendered_interactive {
                 self.base_tex
                     .update(None, app_renderer.base_rgba(), (SCREEN_W * 4) as usize)?;
@@ -244,7 +257,7 @@ impl<'a> SdlGameRenderer<'a> {
         // Draw Mickey cursor on GPU (hidden for touch modality so it doesn't float stale)
         if active_device != InputDeviceKind::Touch
             && let Some((sprite_idx, px, py)) =
-                AppRenderer::desired_cursor(app, mx, my, show_reference)
+                AppRenderer::desired_cursor(world, mx, my, show_reference)
             && let Some(slot) = sprite_idx.checked_sub(62)
             && let Some(Some((tex, cw, ch))) = self.cursor_texs.get(slot)
         {
@@ -253,19 +266,23 @@ impl<'a> SdlGameRenderer<'a> {
         }
 
         // Desktop HUD
-        if tf.hud_visible(app.screen == AppScreen::Playing)
-            && let Some(session) = &app.session
+        if tf.hud_visible(screen == AppScreen::Playing)
+            && world.resource::<ActivePuzzle>().0.is_some()
         {
             self.render_desktop_hud(
                 canvas,
-                session,
+                world,
                 tf,
                 (hud_ref_hovered, show_reference, active_device),
             )?;
-        } else if app.screen == AppScreen::Playing
-            && let Some(session) = app.session.as_ref().filter(|s| s.timer_enabled)
+        } else if screen == AppScreen::Playing
+            && let Some(active) = world
+                .resource::<ActivePuzzle>()
+                .0
+                .as_ref()
+                .filter(|p| p.timer_enabled)
         {
-            let time = session.formatted_time();
+            let time = active.formatted_time();
             draw_scaled_text(
                 canvas,
                 &time,
@@ -284,35 +301,45 @@ impl<'a> SdlGameRenderer<'a> {
     fn render_interactive_board(
         &mut self,
         canvas: &mut Canvas<Window>,
-        app: &GameApp,
-        sess: &PuzzleSession,
+        world: &mut World,
         app_renderer: &mut AppRenderer,
         tf: &ViewportTransform,
         mx: i32,
         my: i32,
         picture_guide: bool,
     ) -> SdlResult<()> {
-        let tbx = if sess.asset.uses_ega() {
-            &app.tbx_ega
-        } else {
-            &app.tbx
+        let versions = *world.resource::<RenderVersions>();
+        let (session_id, asset_rev, uses_ega, (px, py)) = {
+            let meta = world.resource::<ActivePuzzle>().0.as_ref().unwrap();
+            (
+                meta.session_id,
+                meta.asset_rev,
+                meta.asset.uses_ega(),
+                meta.active_pointer(mx, my),
+            )
         };
-        let (px, py) = sess.active_pointer(mx, my);
 
         // 1. Static board layer (with picture guide baked in once per board_rev/guide toggle)
         let board_key = BoardTexKey {
-            session_id: sess.session_id(),
-            asset_rev: sess.asset_rev(),
-            board_rev: sess.board_rev(),
+            session_id,
+            asset_rev,
+            board_rev: versions.board_rev,
             picture_guide,
         };
         if self.board_tex_key != Some(board_key) {
-            app_renderer.puzzle_renderer.render_board_layer_rgba(
-                sess,
-                tbx,
-                picture_guide,
-                &mut self.board_rgba,
-            );
+            world.resource_scope(|world, assets: bevy_ecs::prelude::Mut<StaticAssets>| {
+                let tbx = if uses_ega {
+                    &assets.tbx_ega
+                } else {
+                    &assets.tbx
+                };
+                app_renderer.puzzle_renderer.render_board_layer_rgba(
+                    world,
+                    tbx,
+                    picture_guide,
+                    &mut self.board_rgba,
+                );
+            });
             self.base_tex
                 .update(None, &self.board_rgba, (SCREEN_W * 4) as usize)?;
             self.board_tex_key = Some(board_key);
@@ -321,17 +348,28 @@ impl<'a> SdlGameRenderer<'a> {
         canvas.copy(&self.base_tex, None, Some(board_dst))?;
 
         // 2. F1 hint silhouette (tinted on GPU without re-uploading)
-        if let Some((hidx, rem)) = sess.hint_piece {
+        let hint_info = world
+            .query::<(&PieceIdentity, &HintHighlight)>()
+            .iter(world)
+            .next()
+            .map(|(id, h)| (id.index, h.timer.remaining_secs()));
+        if let Some((hidx, rem)) = hint_info {
+            let playfield_x = world
+                .resource::<ActivePuzzle>()
+                .0
+                .as_ref()
+                .map_or(0, |m| m.playfield_x());
             let hint_key = HintTexKey {
-                session_id: sess.session_id(),
-                asset_rev: sess.asset_rev(),
+                session_id,
+                asset_rev,
                 hint_idx: hidx,
+                playfield_x,
             };
             let rebuild = self.hint_layer.as_ref().is_none_or(|(k, _)| *k != hint_key);
             if rebuild {
                 if let Some((hx, hy, hw, hh)) = app_renderer
                     .puzzle_renderer
-                    .render_hint_layer_rgba(sess, &mut self.scratch_rgba)
+                    .render_hint_layer_rgba(world, &mut self.scratch_rgba)
                 {
                     let tex = Self::upload_rgba_layer(
                         self.creator,
@@ -369,28 +407,48 @@ impl<'a> SdlGameRenderer<'a> {
         }
 
         // 3. Toolbox strip or closed tab
-        let hovered = sess.toolbox_target_at(px, py);
+        let tray_len = world
+            .query::<&PieceLocation>()
+            .iter(world)
+            .filter(|loc| matches!(loc, PieceLocation::Tray { .. }))
+            .count();
+        let (toolbox_open, pressed, hovered) = {
+            let meta = world.resource::<ActivePuzzle>().0.as_ref().unwrap();
+            (
+                meta.toolbox_open,
+                meta.pressed_toolbox_target,
+                meta.toolbox_target_at(px, py, false, tray_len),
+            )
+        };
         let tbx_key = ToolboxTexKey {
-            session_id: sess.session_id(),
-            asset_rev: sess.asset_rev(),
-            toolbox_open: sess.toolbox_open,
-            tray_rev: sess.tray_rev(),
+            session_id,
+            asset_rev,
+            toolbox_open,
+            tray_rev: versions.tray_rev,
             hovered,
-            pressed: sess.pressed_toolbox_target,
+            pressed,
         };
         if self
             .toolbox_layer
             .as_ref()
             .is_none_or(|(k, _)| *k != tbx_key)
         {
-            let (tx, ty, tw, th) = app_renderer.puzzle_renderer.render_toolbox_layer_rgba(
-                sess,
-                tbx,
-                &app.font,
-                px,
-                py,
-                &mut self.scratch_rgba,
-            );
+            let (tx, ty, tw, th) =
+                world.resource_scope(|world, assets: bevy_ecs::prelude::Mut<StaticAssets>| {
+                    let tbx = if uses_ega {
+                        &assets.tbx_ega
+                    } else {
+                        &assets.tbx
+                    };
+                    app_renderer.puzzle_renderer.render_toolbox_layer_rgba(
+                        world,
+                        tbx,
+                        &assets.font,
+                        px,
+                        py,
+                        &mut self.scratch_rgba,
+                    )
+                });
             let tex =
                 Self::upload_rgba_layer(self.creator, tw, th, &self.scratch_rgba, BlendMode::None)?;
             self.toolbox_layer = Some((
@@ -410,19 +468,45 @@ impl<'a> SdlGameRenderer<'a> {
         }
 
         // 4. Held piece / connected group (uploaded once per pickup/cell; zero CPU work while dragging)
-        if let Some(pidx) = sess.held_piece {
-            let anchor_cell = sess.held_group_anchor_cell(px, py);
+        let mut held_anchor: Option<(usize, i32, i32)> = None;
+        let mut held_items: Vec<(usize, bool, (i32, i32))> = Vec::new();
+        for (ident, geom, loc) in world
+            .query::<(&PieceIdentity, &PieceGeometry, &PieceLocation)>()
+            .iter(world)
+        {
+            if let PieceLocation::Held {
+                is_anchor,
+                group_offset,
+                ..
+            } = *loc
+            {
+                held_items.push((ident.index, is_anchor, group_offset));
+                if is_anchor {
+                    held_anchor = Some((ident.index, geom.base_w, geom.base_h));
+                }
+            }
+        }
+        if let Some((pidx, anchor_w, anchor_h)) = held_anchor {
+            let anchor_cell = {
+                let meta = world.resource::<ActivePuzzle>().0.as_ref().unwrap();
+                crate::ecs::puzzle_ops::held_group_anchor_cell(
+                    meta,
+                    px,
+                    py,
+                    held_items.iter().copied(),
+                )
+            };
             let held_key = HeldTexKey {
-                session_id: sess.session_id(),
-                asset_rev: sess.asset_rev(),
-                board_rev: sess.board_rev(),
+                session_id,
+                asset_rev,
+                board_rev: versions.board_rev,
                 held_piece: pidx,
                 anchor_cell,
             };
             if self.held_layer.as_ref().is_none_or(|(k, _)| *k != held_key) {
                 if let Some((rx, ry, hw, hh)) = app_renderer
                     .puzzle_renderer
-                    .render_held_group_layer_rgba(sess, px, py, &mut self.scratch_rgba)
+                    .render_held_group_layer_rgba(world, px, py, &mut self.scratch_rgba)
                 {
                     let tex = Self::upload_rgba_layer(
                         self.creator,
@@ -446,9 +530,8 @@ impl<'a> SdlGameRenderer<'a> {
                 }
             }
             if let Some((_, layer)) = &self.held_layer {
-                let anchor = &sess.pieces[pidx];
-                let ax = px - anchor.base_w / 2;
-                let ay = py - anchor.base_h / 2;
+                let ax = px - anchor_w / 2;
+                let ay = py - anchor_h / 2;
                 let dst =
                     Self::dos_rect_to_viewport(tf, ax + layer.x, ay + layer.y, layer.w, layer.h);
                 canvas.copy(&layer.tex, None, Some(dst))?;
@@ -459,12 +542,16 @@ impl<'a> SdlGameRenderer<'a> {
 
         // 5. Status / caption / error overlay
         let overlay_key = OverlayTexKey {
-            status: sess.status_message().map(str::to_owned),
-            caption: (app.prefs.text_msg_on != 0)
-                .then(|| app.audio.common_caption())
-                .flatten()
+            status: world
+                .resource::<ActivePuzzle>()
+                .0
+                .as_ref()
+                .and_then(|m| m.status_message())
                 .map(str::to_owned),
-            has_error: app.error.is_some(),
+            caption: (world.resource::<GameConfig>().prefs.text_msg_on != 0)
+                .then(|| world.resource::<AudioStatus>().common_caption.clone())
+                .flatten(),
+            has_error: world.resource::<ScreenState>().error.is_some(),
         };
         if overlay_key.status.is_some() || overlay_key.caption.is_some() || overlay_key.has_error {
             if self
@@ -472,7 +559,7 @@ impl<'a> SdlGameRenderer<'a> {
                 .as_ref()
                 .is_none_or(|(k, _)| *k != overlay_key)
             {
-                if app_renderer.render_playing_overlay_rgba(app, &mut self.overlay_rgba) {
+                if app_renderer.render_playing_overlay_rgba(world, &mut self.overlay_rgba) {
                     let tex = Self::upload_rgba_layer(
                         self.creator,
                         SCREEN_W,
@@ -493,7 +580,12 @@ impl<'a> SdlGameRenderer<'a> {
         }
 
         // 6. Keyboard pointer crosshair
-        if let Some((kx, ky)) = sess.keyboard_pointer {
+        if let Some((kx, ky)) = world
+            .resource::<ActivePuzzle>()
+            .0
+            .as_ref()
+            .and_then(|m| m.keyboard_pointer)
+        {
             let (kx, ky) = (kx.round() as i32, ky.round() as i32);
             let outer = Self::dos_rect_to_viewport(tf, kx - 3, ky - 3, 7, 7);
             canvas.set_draw_color(Color::RGB(0, 0, 0));
@@ -511,7 +603,7 @@ impl<'a> SdlGameRenderer<'a> {
     fn render_desktop_hud(
         &mut self,
         canvas: &mut Canvas<Window>,
-        session: &PuzzleSession,
+        world: &mut bevy_ecs::prelude::World,
         tf: &ViewportTransform,
         (reference_hovered, show_reference, active_device): (bool, bool, InputDeviceKind),
     ) -> SdlResult<()> {
@@ -525,9 +617,19 @@ impl<'a> SdlGameRenderer<'a> {
         canvas.set_draw_color(bar_bg);
         canvas.fill_rect(FRect::new(0.0, 0.0, win_w, 80.0))?;
 
-        let ref_key = (session.session_id(), session.asset_rev());
+        let (session_id, asset_rev) = {
+            let meta = world.resource::<ActivePuzzle>().0.as_ref().unwrap();
+            (meta.session_id, meta.asset_rev)
+        };
+        let ref_key = (session_id, asset_rev);
         if self.cached_ref_key != Some(ref_key) {
-            session.full_picture_fb.to_rgba8(&mut self.scratch_rgba);
+            world
+                .resource::<ActivePuzzle>()
+                .0
+                .as_ref()
+                .unwrap()
+                .full_picture_fb
+                .to_rgba8(&mut self.scratch_rgba);
             self.ref_tex
                 .update(None, &self.scratch_rgba, (SCREEN_W * 4) as usize)?;
             self.cached_ref_key = Some(ref_key);
@@ -553,34 +655,46 @@ impl<'a> SdlGameRenderer<'a> {
             ink,
         )?;
 
-        let placed = session.placed_count();
+        let mut total_pieces = 0usize;
+        let mut placed = 0usize;
+        let mut is_holding = false;
+        for loc in world.query::<&PieceLocation>().iter(world) {
+            total_pieces += 1;
+            match loc {
+                PieceLocation::Board { .. } => placed += 1,
+                PieceLocation::Held { .. } => is_holding = true,
+                PieceLocation::Tray { .. } => {}
+            }
+        }
+        let meta = world.resource::<ActivePuzzle>().0.as_ref().unwrap();
+        let puzzle_num = meta.puzzle_num;
+        let timer_enabled = meta.timer_enabled;
+        let formatted_time = meta.formatted_time();
+        let solved = meta.solved;
+
         let status = if compact {
-            format!(
-                "{:02} / {} of {}",
-                session.puzzle_num,
-                placed,
-                session.pieces.len()
-            )
+            format!("{puzzle_num:02} / {placed} of {total_pieces}")
         } else {
-            format!(
-                "Picture {:02}  /  {} of {} pieces placed",
-                session.puzzle_num,
-                placed,
-                session.pieces.len()
-            )
+            format!("Picture {puzzle_num:02}  /  {placed} of {total_pieces} pieces placed")
         };
         draw_scaled_text(canvas, &status, 112.0, 44.0, 1.5, muted)?;
 
-        if session.timer_enabled {
-            let time = session.formatted_time();
-            let text_w = time.len() as f32 * 8.0 * 2.0;
-            draw_scaled_text(canvas, &time, win_w - text_w - 20.0, 12.0, 2.0, ink)?;
+        if timer_enabled {
+            let text_w = formatted_time.len() as f32 * 8.0 * 2.0;
+            draw_scaled_text(
+                canvas,
+                &formatted_time,
+                win_w - text_w - 20.0,
+                12.0,
+                2.0,
+                ink,
+            )?;
         }
 
         let btn = tf.reference_button_rect();
         let btn_col = if show_reference {
             accent
-        } else if reference_hovered && !session.solved {
+        } else if reference_hovered && !solved {
             Color::RGB(0x49, 0x66, 0x75)
         } else {
             Color::RGB(0x36, 0x4c, 0x57)
@@ -588,7 +702,7 @@ impl<'a> SdlGameRenderer<'a> {
         canvas.set_draw_color(btn_col);
         canvas.fill_rect(FRect::new(btn.x, btn.y, btn.w, btn.h))?;
 
-        let btn_label = if session.solved {
+        let btn_label = if solved {
             "Picture complete!"
         } else if show_reference {
             "Release to play"
@@ -610,15 +724,15 @@ impl<'a> SdlGameRenderer<'a> {
             "Tab: picture  H: guide  F1: hint  Esc: menu"
         } else if show_reference {
             "Picture reference  /  progress and timer paused"
-        } else if session.solved {
+        } else if solved {
             "Tap/click picture to play  /  Esc: choose another puzzle"
         } else if active_device == InputDeviceKind::Touch {
-            if session.held_piece.is_some() {
+            if is_holding {
                 "Drag to board  /  Tap tray to return piece"
             } else {
                 "Tap/drag pieces  /  Long-press or 2-finger tap: toolbox/group  /  2-finger drag: scroll"
             }
-        } else if session.held_piece.is_some() {
+        } else if is_holding {
             "Place on the board  /  Click the tray to return the piece"
         } else {
             "Pick and place  /  H: guide  G: edges  F1: hint  Esc: menu"
@@ -766,7 +880,7 @@ fn translate_sdl_event(ev: Event, win_w: f32, win_h: f32) -> Option<PlatformEven
     }
 }
 
-pub fn run(mut app: GameApp) -> Result<(), String> {
+pub fn run(mut app: App) -> Result<(), String> {
     // Disable synthetic mouse<->touch translation so touch & mouse remain cleanly separated.
     sdl3::hint::set("SDL_TOUCH_MOUSE_EVENTS", "0");
     sdl3::hint::set("SDL_MOUSE_TOUCH_EVENTS", "0");
@@ -784,7 +898,8 @@ pub fn run(mut app: GameApp) -> Result<(), String> {
     let vsync_enabled = unsafe { sdl3::sys::render::SDL_SetRenderVSync(canvas.raw(), 1) };
 
     let creator = canvas.texture_creator();
-    let mut sdl_renderer = SdlGameRenderer::new(&creator, &app).map_err(|e| e.to_string())?;
+    let mut sdl_renderer =
+        SdlGameRenderer::new(&creator, app.world()).map_err(|e| e.to_string())?;
     let mut app_renderer = AppRenderer::new();
     let mut input_router = InputRouter::new();
     let mut event_pump = sdl.event_pump().map_err(|e| e.to_string())?;
@@ -815,9 +930,15 @@ pub fn run(mut app: GameApp) -> Result<(), String> {
             }
         }
 
-        let playing = app.screen == AppScreen::Playing;
+        let playing = app_screen(&app) == AppScreen::Playing;
         let transform = ViewportTransform::new(win_w, win_h, pixel_density, playing);
-        let reference_available = playing && app.session.as_ref().is_some_and(|s| !s.solved);
+        let reference_available = playing
+            && app
+                .world()
+                .resource::<ActivePuzzle>()
+                .0
+                .as_ref()
+                .is_some_and(|p| !p.solved);
         let frame = input_router.finish_frame(dt, &transform, playing, reference_available);
 
         if frame.toggle_picture_guide {
@@ -825,12 +946,10 @@ pub fn run(mut app: GameApp) -> Result<(), String> {
         }
 
         if frame.show_reference {
-            if let Some(session) = &mut app.session {
-                session.cancel_pointer_drag();
-            }
+            crate::ecs::systems::puzzle_input::cancel_pointer_drag(app.world_mut());
         } else {
-            app.handle_input(&frame.app_input);
-            if app.should_exit() {
+            step_app(&mut app, &frame.app_input);
+            if should_exit(&app) {
                 break 'main;
             }
         }
@@ -838,22 +957,24 @@ pub fn run(mut app: GameApp) -> Result<(), String> {
         let mx = frame.app_input.pointer_x;
         let my = frame.app_input.pointer_y;
         let inside = (0..SCREEN_W).contains(&mx) && (0..SCREEN_H).contains(&my);
-        let kbd_active = app.screen == AppScreen::Playing
+        let kbd_active = app_screen(&app) == AppScreen::Playing
             && app
-                .session
+                .world()
+                .resource::<ActivePuzzle>()
+                .0
                 .as_ref()
-                .is_some_and(|s| s.keyboard_pointer.is_some());
+                .is_some_and(|p| p.keyboard_pointer.is_some());
         let want_system_cursor = !(inside
             && !frame.show_reference
             && !kbd_active
             && frame.active_device != InputDeviceKind::Touch
-            && app.has_mickey_cursor());
+            && has_mickey_cursor(&app));
         if want_system_cursor != cursor_visible {
             sdl.mouse().show_cursor(want_system_cursor);
             cursor_visible = want_system_cursor;
         }
 
-        let post_playing = app.screen == AppScreen::Playing;
+        let post_playing = app_screen(&app) == AppScreen::Playing;
         let post_transform = if post_playing == playing {
             transform
         } else {
@@ -863,7 +984,7 @@ pub fn run(mut app: GameApp) -> Result<(), String> {
         sdl_renderer
             .render_frame(
                 &mut canvas,
-                &app,
+                app.world_mut(),
                 &mut app_renderer,
                 &post_transform,
                 mx,

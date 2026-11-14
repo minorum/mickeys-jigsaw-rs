@@ -2,6 +2,7 @@ pub mod app;
 pub mod assets;
 pub mod audio;
 pub mod decompress;
+pub mod ecs;
 pub mod graphics;
 pub mod input;
 pub mod puzzle;
@@ -12,7 +13,7 @@ pub mod setup;
 use std::env;
 use std::path::{Path, PathBuf};
 
-use crate::app::GameApp;
+use crate::app::build_game_app;
 
 fn find_game_dir() -> PathBuf {
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -36,7 +37,7 @@ fn main() {
         .any(|a| a.eq_ignore_ascii_case("/S") || a.eq_ignore_ascii_case("--setup"));
 
     let game_dir = find_game_dir();
-    let app = match GameApp::new(game_dir, start_in_setup) {
+    let app = match build_game_app(game_dir, start_in_setup) {
         Ok(a) => a,
         Err(e) => {
             eprintln!("Failed to initialize Mickey's Jigsaw Puzzles: {}", e);
