@@ -18,6 +18,19 @@ use crate::input::{
 use crate::puzzle::{PuzzleSession, ToolboxTarget};
 
 const SDL_TOUCH_MOUSEID: u32 = sdl3::sys::touch::SDL_TOUCH_MOUSEID.0;
+const FALLBACK_FRAME_INTERVAL: Duration = Duration::from_nanos(16_666_667);
+
+fn compute_frame_sleep(
+    frame_elapsed: Duration,
+    target_interval: Duration,
+    vsync_enabled: bool,
+) -> Option<Duration> {
+    if vsync_enabled || frame_elapsed >= target_interval {
+        None
+    } else {
+        Some(target_interval - frame_elapsed)
+    }
+}
 
 type SdlResult<T> = Result<T, Box<dyn std::error::Error>>;
 
@@ -768,9 +781,7 @@ pub fn run(mut app: GameApp) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     let mut canvas = window.into_canvas();
-    unsafe {
-        sdl3::sys::render::SDL_SetRenderVSync(canvas.raw(), 1);
-    }
+    let vsync_enabled = unsafe { sdl3::sys::render::SDL_SetRenderVSync(canvas.raw(), 1) };
 
     let creator = canvas.texture_creator();
     let mut sdl_renderer = SdlGameRenderer::new(&creator, &app).map_err(|e| e.to_string())?;
@@ -864,12 +875,38 @@ pub fn run(mut app: GameApp) -> Result<(), String> {
             )
             .map_err(|e| e.to_string())?;
 
-        // Soft cap if vsync is unavailable on headless/virtual displays
-        let frame_elapsed = last_frame.elapsed();
-        if frame_elapsed < Duration::from_millis(8) {
-            std::thread::sleep(Duration::from_millis(2));
+        // Enforce a real minimum frame interval when vsync is unavailable
+        if let Some(sleep_dur) = compute_frame_sleep(
+            last_frame.elapsed(),
+            FALLBACK_FRAME_INTERVAL,
+            vsync_enabled,
+        ) {
+            std::thread::sleep(sleep_dur);
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_pacing_enforces_target_interval_without_vsync() {
+        let target = FALLBACK_FRAME_INTERVAL;
+        assert_eq!(
+            compute_frame_sleep(Duration::from_millis(2), target, true),
+            None
+        );
+        assert_eq!(
+            compute_frame_sleep(Duration::from_millis(2), target, false),
+            Some(target - Duration::from_millis(2))
+        );
+        assert_eq!(compute_frame_sleep(target, target, false), None);
+        assert_eq!(
+            compute_frame_sleep(target + Duration::from_millis(3), target, false),
+            None
+        );
+    }
 }

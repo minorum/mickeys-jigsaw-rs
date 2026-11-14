@@ -1361,40 +1361,120 @@ fn perf_benchmark() {
     }
     let render_dissolve = t_dissolve.elapsed();
 
-    // Dragging a piece with the new layer-composited pipeline (board, toolbox, held group cached)
+    // Dragging a piece with the new layer-composited pipeline:
+    // 1) CPU-only cache-hit cost (offset/key lookup when board/toolbox/held layers are cached)
+    // 2) Actual headless SDL3 software-renderer Canvas (clear + 3x texture copy + present)
     session.held_piece = Some(0);
     let mut layer_board = vec![0u8; 320 * 200 * 4];
     let mut layer_tbx = Vec::new();
     let mut layer_held = Vec::new();
     renderer.render_board_layer_rgba(&session, &tbx, true, &mut layer_board);
-    renderer.render_toolbox_layer_rgba(&session, &tbx, &font, 160, 100, &mut layer_tbx);
+    let tbx_bounds =
+        renderer.render_toolbox_layer_rgba(&session, &tbx, &font, 160, 100, &mut layer_tbx);
     let held_bounds = renderer
         .render_held_group_layer_rgba(&session, 160, 100, &mut layer_held)
         .unwrap();
-    let t_drag_layers = Instant::now();
+    let t_drag_cache_hit = Instant::now();
     for i in 0..iters {
         let mx = 80 + (i % 160);
         let my = 40 + (i % 120);
+        let anchor_cell = session.held_group_anchor_cell(mx, my);
         let anchor = &session.pieces[0];
         let ax = mx - anchor.base_w / 2 + held_bounds.0;
         let ay = my - anchor.base_h / 2 + held_bounds.1;
-        black_box((ax, ay, &layer_board[0], &layer_tbx[0], &layer_held[0]));
+        black_box((ax, ay, anchor_cell, &layer_board[0], &layer_tbx[0], &layer_held[0]));
     }
-    let drag_layers = t_drag_layers.elapsed();
+    let drag_cpu_cache_hit = t_drag_cache_hit.elapsed();
+
+    let mut sw_canvas = sdl3::surface::Surface::new(960, 720, sdl3::pixels::PixelFormat::RGBA32)
+        .unwrap()
+        .into_canvas()
+        .unwrap();
+    let sw_creator = sw_canvas.texture_creator();
+    let mut sw_board_tex = sw_creator
+        .create_texture_static(sdl3::pixels::PixelFormat::RGBA32, 320, 200)
+        .unwrap();
+    sw_board_tex
+        .update(None, &layer_board, 320 * 4)
+        .unwrap();
+    let mut sw_tbx_tex = sw_creator
+        .create_texture_static(
+            sdl3::pixels::PixelFormat::RGBA32,
+            tbx_bounds.2 as u32,
+            tbx_bounds.3 as u32,
+        )
+        .unwrap();
+    sw_tbx_tex
+        .update(None, &layer_tbx, (tbx_bounds.2 * 4) as usize)
+        .unwrap();
+    let mut sw_held_tex = sw_creator
+        .create_texture_static(
+            sdl3::pixels::PixelFormat::RGBA32,
+            held_bounds.2 as u32,
+            held_bounds.3 as u32,
+        )
+        .unwrap();
+    sw_held_tex
+        .update(None, &layer_held, (held_bounds.2 * 4) as usize)
+        .unwrap();
+    let sw_iters = 200;
+    let t_sdl_sw = Instant::now();
+    for i in 0..sw_iters {
+        let mx = 80 + (i % 160);
+        let my = 40 + (i % 120);
+        let anchor = &session.pieces[0];
+        let ax = (mx - anchor.base_w / 2 + held_bounds.0) as f32 * 3.0;
+        let ay = (my - anchor.base_h / 2 + held_bounds.1) as f32 * 3.0;
+        sw_canvas.clear();
+        sw_canvas
+            .copy(
+                &sw_board_tex,
+                None,
+                Some(sdl3::render::FRect::new(0.0, 60.0, 960.0, 600.0)),
+            )
+            .unwrap();
+        sw_canvas
+            .copy(
+                &sw_tbx_tex,
+                None,
+                Some(sdl3::render::FRect::new(
+                    tbx_bounds.0 as f32 * 3.0,
+                    60.0 + tbx_bounds.1 as f32 * 3.0,
+                    tbx_bounds.2 as f32 * 3.0,
+                    tbx_bounds.3 as f32 * 3.0,
+                )),
+            )
+            .unwrap();
+        sw_canvas
+            .copy(
+                &sw_held_tex,
+                None,
+                Some(sdl3::render::FRect::new(
+                    ax,
+                    60.0 + ay,
+                    held_bounds.2 as f32 * 3.0,
+                    held_bounds.3 as f32 * 3.0,
+                )),
+            )
+            .unwrap();
+        sw_canvas.present();
+    }
+    let drag_sdl_sw_canvas = t_sdl_sw.elapsed();
     session.held_piece = None;
 
     eprintln!(
         "load_15_vga={:.2}ms load_15_ega={:.2}ms cut_8x8={:.2}ms cut_preset={:.2}ms \
-         render_warm={:.2}us/frame drag_full={:.2}us/frame drag_layers={:.3}us/frame \
-         to_rgba8={:.2}us/frame guide={:.2}us/frame render_anim={:.2}us/frame \
-         render_dissolve={:.2}us/frame",
+         render_warm={:.2}us/frame drag_full={:.2}us/frame drag_cpu_cache_hit={:.3}us/frame \
+         drag_sdl_sw_canvas={:.2}us/frame to_rgba8={:.2}us/frame guide={:.2}us/frame \
+         render_anim={:.2}us/frame render_dissolve={:.2}us/frame",
         load_all_vga.as_secs_f64() * 1000.0,
         load_all_ega.as_secs_f64() * 1000.0,
         cut_8x8.as_secs_f64() * 1000.0,
         cut_preset.as_secs_f64() * 1000.0,
         render_warm.as_secs_f64() * 1e6 / iters as f64,
         drag_full.as_secs_f64() * 1e6 / iters as f64,
-        drag_layers.as_secs_f64() * 1e6 / iters as f64,
+        drag_cpu_cache_hit.as_secs_f64() * 1e6 / iters as f64,
+        drag_sdl_sw_canvas.as_secs_f64() * 1e6 / sw_iters as f64,
         to_rgba.as_secs_f64() * 1e6 / iters as f64,
         guide.as_secs_f64() * 1e6 / iters as f64,
         render_anim.as_secs_f64() * 1e6 / anim_iters as f64,
@@ -3478,4 +3558,107 @@ fn touch_input_drives_puzzle_drag_placement_tray_and_menus() {
     let f_menu_rel = router.finish_frame(0.016, &tf, true, true);
     app.handle_input(&f_menu_rel.app_input);
     assert!(app.in_game_menu_open);
+
+    // 6. Close modal menu, place a 2-piece edge-connected cluster, and verify both
+    //    long-press and two-finger tap lift the entire 2-piece group (forwarding every frame).
+    app.close_in_game_menu(false);
+    {
+        let sess = app.session.as_mut().unwrap();
+        let mut audio = AudioEngine::new(&test_game_dir(), false, false);
+        for pidx in [0usize, 1] {
+            sess.tray_order.retain(|&id| id != pidx);
+            sess.held_piece = Some(pidx);
+            let px = sess.playfield_x() + sess.pieces[pidx].base_x + sess.pieces[pidx].base_w / 2;
+            let py = sess.playfield_y() + sess.pieces[pidx].base_y + sess.pieces[pidx].base_h / 2;
+            sess.handle_pointer_release(px, py, &mut audio);
+        }
+    }
+    let (c_x, c_y) = {
+        let sess = app.session.as_ref().unwrap();
+        let p = &sess.pieces[0];
+        dos_to_logical(
+            sess.playfield_x() + p.base_x + p.base_w / 2,
+            sess.playfield_y() + p.base_y + p.base_h / 2,
+        )
+    };
+    // 6a. Long-press lifts both pieces
+    router.push_event(PlatformEvent::TouchDown {
+        finger_id: 7,
+        x: c_x,
+        y: c_y,
+    });
+    let f_c_down = router.finish_frame(0.1, &tf, true, true);
+    app.handle_input(&f_c_down.app_input);
+    assert_eq!(app.session.as_ref().unwrap().held_piece, None);
+    let f_c_lp = router.finish_frame(0.4, &tf, true, true);
+    app.handle_input(&f_c_lp.app_input);
+    {
+        let sess = app.session.as_ref().unwrap();
+        assert_eq!(sess.held_piece, Some(0));
+        assert_eq!(sess.held_group.len(), 2);
+        assert!(!sess.pieces[0].placed && !sess.pieces[1].placed);
+    }
+    router.push_event(PlatformEvent::TouchUp {
+        finger_id: 7,
+        x: c_x,
+        y: c_y,
+    });
+    let f_c_up = router.finish_frame(0.016, &tf, true, true);
+    app.handle_input(&f_c_up.app_input);
+
+    // Place cluster back on board via tap at original position
+    router.push_event(PlatformEvent::TouchDown {
+        finger_id: 8,
+        x: c_x,
+        y: c_y,
+    });
+    router.push_event(PlatformEvent::TouchUp {
+        finger_id: 8,
+        x: c_x,
+        y: c_y,
+    });
+    let f_place = router.finish_frame(0.016, &tf, true, true);
+    app.handle_input(&f_place.app_input);
+    let f_place_rel = router.finish_frame(0.016, &tf, true, true);
+    app.handle_input(&f_place_rel.app_input);
+    assert!(app.session.as_ref().unwrap().pieces[0].placed);
+    assert!(app.session.as_ref().unwrap().pieces[1].placed);
+
+    // 6b. Two-finger tap also lifts the entire 2-piece connected cluster
+    router.push_event(PlatformEvent::TouchDown {
+        finger_id: 9,
+        x: c_x,
+        y: c_y,
+    });
+    let f_tf_down1 = router.finish_frame(0.016, &tf, true, true);
+    app.handle_input(&f_tf_down1.app_input);
+    assert_eq!(app.session.as_ref().unwrap().held_piece, None);
+    router.push_event(PlatformEvent::TouchDown {
+        finger_id: 10,
+        x: c_x + 30.0,
+        y: c_y,
+    });
+    let f_tf_down2 = router.finish_frame(0.016, &tf, true, true);
+    app.handle_input(&f_tf_down2.app_input);
+    router.push_event(PlatformEvent::TouchUp {
+        finger_id: 10,
+        x: c_x + 30.0,
+        y: c_y,
+    });
+    let f_tf_up2 = router.finish_frame(0.016, &tf, true, true);
+    app.handle_input(&f_tf_up2.app_input);
+    {
+        let sess = app.session.as_ref().unwrap();
+        assert_eq!(sess.held_piece, Some(0));
+        assert_eq!(sess.held_group.len(), 2);
+        assert!(!sess.pieces[0].placed && !sess.pieces[1].placed);
+    }
+    router.push_event(PlatformEvent::TouchUp {
+        finger_id: 9,
+        x: c_x,
+        y: c_y,
+    });
+    let f_tf_up1 = router.finish_frame(0.016, &tf, true, true);
+    app.handle_input(&f_tf_up1.app_input);
+    assert_eq!(app.session.as_ref().unwrap().held_group.len(), 2);
 }
