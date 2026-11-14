@@ -1223,7 +1223,6 @@ impl AppRenderer {
                         &app.preview_asset,
                         app.preview_asset.static_frame_idx(),
                     );
-                    scratch_fb.pixels.copy_from_slice(&cached_fb.pixels);
                     let black = cached_fb.color_index([0; 3]);
                     cached_fb.clear(black);
                     copy_scene_interior(&mut cached_fb, scratch_fb, 34);
@@ -1232,7 +1231,7 @@ impl AppRenderer {
                     for (i, &rgb) in tbx.palette.iter().enumerate() {
                         tbx_remap[i] = cached_fb.color_index(rgb);
                     }
-                    draw_playfield_border_remapped(&mut cached_fb, tbx, 32, 270, &tbx_remap);
+                    draw_playfield_border_remapped(&mut cached_fb, tbx, 32, 272, &tbx_remap);
                     if tbx.sprites.len() > 12 {
                         cached_fb.blit_sprite_remapped(&tbx.sprites[10], 0, 0, 0, &tbx_remap);
                         for row in 0..10 {

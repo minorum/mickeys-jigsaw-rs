@@ -2175,6 +2175,68 @@ fn browser_renders_original_tbx_sprites_in_vga_and_ega() {
         let ok_colors: std::collections::HashSet<u8> =
             (212..234).map(|x| fb.get_pixel(x, 175)).collect();
         assert!(ok_colors.len() > 1, "OK TBX sprite empty for ega={ega}");
+
+        // Verify the 270px preview interior starts at x=34 (native x=2) and ends at x=303 (native x=271)
+        // with zero horizontal shift or right-edge cropping.
+        let mut centered = Framebuffer::new();
+        let mut native = Framebuffer::new();
+        crate::graphics::render_scene_view_with_scratch(
+            &mut centered,
+            &mut native,
+            &app.preview_asset,
+            app.preview_asset.static_frame_idx(),
+        );
+        for y in 20..159 {
+            for x in 34..304 {
+                assert_eq!(
+                    fb.get_pixel(x, y),
+                    native.get_pixel(x - 32, y),
+                    "preview pixel mismatch at ({x}, {y}) for ega={ega}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn browser_preview_preserves_left_and_right_edge_markers_without_shift() {
+    use crate::assets::NamedSequence;
+
+    let mut app = synthetic_app();
+    app.set_screen(AppScreen::Browser);
+    while app.preview_asset.sequences.len() < 2 {
+        app.preview_asset.sequences.push(NamedSequence {
+            name: "STILL".to_string(),
+            header_idx: 0,
+            start_frame: 0,
+            end_frame: 0,
+        });
+    }
+    app.preview_asset.sequences[1].start_frame = 0;
+    app.preview_asset.palette[3] = [255, 0, 0];
+    app.preview_asset.palette[4] = [0, 255, 0];
+    let spr = &mut app.preview_asset.sprites[0];
+    for y in 0..200 {
+        let row = y * (spr.stride as usize);
+        for x in 2..6 {
+            spr.pixels[row + x] = 3;
+        }
+        for x in 268..272 {
+            spr.pixels[row + x] = 4;
+        }
+    }
+
+    let mut renderer = AppRenderer::new();
+    renderer.render(&app, 160, 100);
+    let fb = &renderer.fb;
+
+    // Left edge marker (native x=2..5) lands at Browser x=34..37.
+    for x in 34..38 {
+        assert_eq!(fb.get_pixel(x, 80), 3, "left edge missing at x={x}");
+    }
+    // Right edge marker (native x=268..271) lands at Browser x=300..303.
+    for x in 300..304 {
+        assert_eq!(fb.get_pixel(x, 80), 4, "right edge missing at x={x}");
     }
 }
 
