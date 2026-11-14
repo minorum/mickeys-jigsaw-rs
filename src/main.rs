@@ -154,7 +154,7 @@ fn render_desktop_hud(
     draw_text(help, 16.0, win_h - 13.0, 18.0, muted);
 }
 
-fn poll_app_input(dt: f32, mx: i32, my: i32, inside: bool) -> AppInput {
+fn poll_app_input(dt: f32, mx: i32, my: i32, inside: bool, pointer_moved: bool) -> AppInput {
     let (_, wheel_y) = mouse_wheel();
     let wheel_delta = if wheel_y > 0.0 {
         1
@@ -167,6 +167,7 @@ fn poll_app_input(dt: f32, mx: i32, my: i32, inside: bool) -> AppInput {
         dt,
         pointer_x: mx,
         pointer_y: my,
+        pointer_moved,
         left_pressed: inside && is_mouse_button_pressed(MouseButton::Left),
         left_released: is_mouse_button_released(MouseButton::Left),
         right_pressed: inside && is_mouse_button_pressed(MouseButton::Right),
@@ -184,6 +185,7 @@ fn poll_app_input(dt: f32, mx: i32, my: i32, inside: bool) -> AppInput {
         key_s: is_key_pressed(KeyCode::S),
         key_g: is_key_pressed(KeyCode::G),
         key_p: is_key_pressed(KeyCode::P),
+        key_q: is_key_pressed(KeyCode::Q),
         key_t: is_key_pressed(KeyCode::T),
         key_m: is_key_pressed(KeyCode::M),
         f1: is_key_pressed(KeyCode::F1),
@@ -222,6 +224,7 @@ async fn main() {
     let mut cached_ref_key: Option<(u64, u64)> = None;
     let mut picture_guide = true;
     let mut mouse_reference = false;
+    let mut last_raw_mouse = mouse_position();
 
     loop {
         let dt = get_frame_time().clamp(0.0, 0.25);
@@ -239,6 +242,8 @@ async fn main() {
         let mx = ((raw_mx - viewport.x) / scale).floor() as i32;
         let my = ((raw_my - viewport.y) / scale).floor() as i32;
         let inside = (0..SCREEN_W).contains(&mx) && (0..SCREEN_H).contains(&my);
+        let pointer_moved = inside && (raw_mx, raw_my) != last_raw_mouse;
+        last_raw_mouse = (raw_mx, raw_my);
 
         let reference_button = Rect::new(win_w - 210.0, 42.0, 194.0, 30.0);
         let reference_hovered =
@@ -254,9 +259,19 @@ async fn main() {
                 session.cancel_pointer_drag();
             }
         } else {
-            let input = poll_app_input(dt, mx, my, inside);
+            let input = poll_app_input(dt, mx, my, inside, pointer_moved);
             app.handle_input(&input);
+            if app.should_exit() {
+                break;
+            }
         }
+
+        let kbd_active = app.screen == AppScreen::Playing
+            && app
+                .session
+                .as_ref()
+                .is_some_and(|s| s.keyboard_pointer.is_some());
+        show_mouse(!(inside && !show_reference && !kbd_active && app.has_mickey_cursor()));
 
         if renderer.render_if_needed(&app, mx, my, show_reference, picture_guide) {
             texture.update_from_bytes(SCREEN_W as u32, SCREEN_H as u32, &renderer.rgba_buf);

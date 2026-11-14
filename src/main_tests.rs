@@ -607,6 +607,18 @@ fn test_load_toolbox() {
     assert_eq!(tbx.sprites.len(), 65);
     // Border sprites 0x38..=0x3C are used by FUN_1b43_0363
     assert!(tbx.sprites.len() > 0x3C);
+    for cursor in &tbx.sprites[61..=64] {
+        assert_eq!(
+            (
+                cursor.sub_x,
+                cursor.sub_y,
+                cursor.width,
+                cursor.height,
+                cursor.sub_h
+            ),
+            (0, 0, 16, 16, 16)
+        );
+    }
     let ega = ToolboxAsset::load(&dir.join("MJP.TBX"), 1).unwrap();
     assert_eq!(ega.sprites.len(), 62);
     assert!(ega.sprites.iter().all(|sprite| sprite.bpp == 4));
@@ -1929,4 +1941,198 @@ fn escape_prompts_confirmation_when_all_placed_pieces_are_held_as_group() {
             .status_message()
             .is_some_and(|m| m.contains("We're not done yet"))
     );
+}
+
+#[test]
+fn browser_quit_and_print_buttons_and_hotkeys() {
+    let mut app = synthetic_app();
+    app.set_screen(AppScreen::Browser);
+    assert!(!app.quit_requested);
+
+    // Clicking Print button (index 6) sets browser_status.
+    let (action, bx, bw, _) = crate::app::BROWSER_BUTTONS[6];
+    assert_eq!(action, crate::app::BrowserAction::PrintPuzzle);
+    app.handle_input(&AppInput {
+        left_pressed: true,
+        pointer_x: bx + bw / 2,
+        pointer_y: 180,
+        ..Default::default()
+    });
+    assert!(app.browser_status.is_some());
+
+    // Pressing P triggers PrintPuzzle as well.
+    app.browser_status = None;
+    app.handle_input(&AppInput {
+        key_p: true,
+        ..Default::default()
+    });
+    assert!(app.browser_status.is_some());
+
+    // Clicking Quit button (index 7) requests quit.
+    let (quit_action, qx, qw, _) = crate::app::BROWSER_BUTTONS[7];
+    assert_eq!(quit_action, crate::app::BrowserAction::QuitGame);
+    app.handle_input(&AppInput {
+        left_pressed: true,
+        pointer_x: qx + qw / 2,
+        pointer_y: 180,
+        ..Default::default()
+    });
+    assert!(app.quit_requested);
+
+    // Pressing Q or Escape in Browser also sets quit_requested.
+    app.quit_requested = false;
+    app.handle_input(&AppInput {
+        key_q: true,
+        ..Default::default()
+    });
+    assert!(app.quit_requested);
+
+    app.quit_requested = false;
+    app.handle_input(&AppInput {
+        escape: true,
+        ..Default::default()
+    });
+    assert!(app.quit_requested);
+}
+
+#[test]
+fn mickey_cursor_overlay_draws_without_invalidating_base_cache() {
+    let mut app = synthetic_app();
+    app.set_screen(AppScreen::Browser);
+
+    // Populate synthetic sprites up to index 62 (61=open hand, 62=grab hand) with a solid white pixel at (0,0).
+    let mut palette = [[0u8; 3]; 256];
+    palette[1] = [255, 250, 240];
+    app.tbx.palette = palette;
+    while app.tbx.sprites.len() <= 62 {
+        app.tbx.sprites.push(crate::assets::Sprite8061::from_8bpp(
+            2,
+            2,
+            0,
+            vec![1, 0, 0, 0],
+            vec![true, false, false, false],
+        ));
+    }
+    assert!(app.has_mickey_cursor());
+
+    let mut renderer = AppRenderer::new();
+    assert!(renderer.render_if_needed(&app, 100, 80, false, false));
+    let off_100 = (80 * 320 + 100) * 4;
+    assert_eq!(
+        &renderer.rgba_buf[off_100..off_100 + 4],
+        &[255, 250, 240, 255]
+    );
+
+    // Same pointer and state -> no re-render needed.
+    assert!(!renderer.render_if_needed(&app, 100, 80, false, false));
+
+    // Moving pointer updates cursor pixel at (140, 90) and restores (100, 80) from base cache.
+    assert!(renderer.render_if_needed(&app, 140, 90, false, false));
+    let off_140 = (90 * 320 + 140) * 4;
+    assert_eq!(
+        &renderer.rgba_buf[off_140..off_140 + 4],
+        &[255, 250, 240, 255]
+    );
+    assert_ne!(
+        &renderer.rgba_buf[off_100..off_100 + 4],
+        &[255, 250, 240, 255]
+    );
+}
+
+#[test]
+fn wasd_then_mouse_motion_restores_pointer_and_click_target() {
+    let mut app = synthetic_app();
+    let mut palette = [[0u8; 3]; 256];
+    palette[1] = [255, 250, 240];
+    app.tbx.palette = palette;
+    while app.tbx.sprites.len() <= 62 {
+        app.tbx.sprites.push(crate::assets::Sprite8061::from_8bpp(
+            2,
+            2,
+            0,
+            vec![1, 0, 0, 0],
+            vec![true, false, false, false],
+        ));
+    }
+
+    let session = PuzzleSession::new(1, app.preview_asset.clone(), 4, false, false, false);
+    app.session = Some(session);
+    app.set_screen(AppScreen::Playing);
+
+    // 1. WASD steers keyboard_pointer away from physical mouse coordinates (150, 120).
+    app.handle_input(&AppInput {
+        dt: 0.25,
+        move_x: 1,
+        pointer_x: 150,
+        pointer_y: 120,
+        ..Default::default()
+    });
+    let kbd_pos = app.session.as_ref().unwrap().keyboard_pointer.unwrap();
+    assert_eq!(
+        app.session.as_ref().unwrap().active_pointer(150, 120),
+        (kbd_pos.0.round() as i32, kbd_pos.1.round() as i32)
+    );
+
+    // 2. Physical mouse motion without clicking clears keyboard_pointer so Mickey hand tracks (150, 120).
+    app.handle_input(&AppInput {
+        pointer_x: 150,
+        pointer_y: 120,
+        pointer_moved: true,
+        ..Default::default()
+    });
+    assert!(app.session.as_ref().unwrap().keyboard_pointer.is_none());
+    assert_eq!(
+        app.session.as_ref().unwrap().active_pointer(150, 120),
+        (150, 120)
+    );
+
+    let mut renderer = AppRenderer::new();
+    assert!(renderer.render_if_needed(&app, 150, 120, false, false));
+    let off_150 = (120 * 320 + 150) * 4;
+    assert_eq!(
+        &renderer.rgba_buf[off_150..off_150 + 4],
+        &[255, 250, 240, 255]
+    );
+}
+
+#[test]
+fn quit_phase_waits_for_active_sfx_with_bounded_fallback() {
+    let mut app = synthetic_app();
+    app.set_screen(AppScreen::Browser);
+
+    // Without active audio sinks, Quit exits immediately.
+    app.request_quit();
+    assert!(app.quit_requested);
+    assert!(app.should_exit());
+
+    // With an active Rodio sink, Quit enters a noninteractive wait until playback ends or times out.
+    app.quit_requested = false;
+    app.quit_elapsed = 0.0;
+    let (sink, _queue) = rodio::Sink::new_idle();
+    sink.append(rodio::buffer::SamplesBuffer::new(
+        1,
+        11_025,
+        vec![100i16; 4096],
+    ));
+    app.audio.sfx_sinks.push(sink);
+
+    app.request_quit();
+    assert!(app.quit_requested);
+    assert!(!app.should_exit());
+
+    // Interactive keys during quitting phase are ignored, while quit_elapsed advances.
+    app.handle_input(&AppInput {
+        dt: 0.5,
+        key_p: true,
+        ..Default::default()
+    });
+    assert!(app.browser_status.is_none());
+    assert!(!app.should_exit());
+
+    // Bounded fallback exits cleanly once elapsed >= 3.0s even if the sink hasn't drained.
+    app.handle_input(&AppInput {
+        dt: 2.6,
+        ..Default::default()
+    });
+    assert!(app.should_exit());
 }

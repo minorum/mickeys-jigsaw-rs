@@ -579,7 +579,7 @@ pub struct AudioEngine {
     iss_cache: HashMap<(String, usize), Arc<[i16]>>,
     _stream: Option<OutputStream>,
     stream_handle: Option<OutputStreamHandle>,
-    sfx_sinks: Vec<Sink>,
+    pub(crate) sfx_sinks: Vec<Sink>,
     common_caption: Option<(CommonSound, f32, u64)>,
     next_caption_rev: u64,
     music_sink: Option<Sink>,
@@ -767,9 +767,12 @@ impl AudioEngine {
         }
     }
 
-    pub fn is_playing(&self) -> bool {
+    pub fn is_effect_playing(&self) -> bool {
         self.sfx_sinks.iter().any(|sink| !sink.empty())
-            || self.music_sink.as_ref().is_some_and(|sink| !sink.empty())
+    }
+
+    pub fn is_playing(&self) -> bool {
+        self.is_effect_playing() || self.music_sink.as_ref().is_some_and(|sink| !sink.empty())
     }
 
     pub fn set_paused(&self, paused: bool) {
