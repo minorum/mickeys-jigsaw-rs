@@ -312,7 +312,7 @@ impl GameApp {
         let unfinished = self
             .session
             .as_ref()
-            .is_some_and(|s| !s.solved && s.has_any_placed_piece());
+            .is_some_and(|s| !s.solved && s.has_unfinished_progress());
         if unfinished && !self.confirm_exit_puzzle {
             self.confirm_exit_puzzle = true;
             self.audio.play_common(CommonSound::NotDoneYet);

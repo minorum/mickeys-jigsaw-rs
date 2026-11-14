@@ -2367,7 +2367,7 @@ fn blend_picture_guide_protects_non_anchor_held_group_pixels_matching_board_bg()
     renderer.blend_picture_guide(&session, &mut rgba, pointer_x, pointer_y);
 
     // Center of non-anchor piece 5 (which had board_bg color in rgba) must remain protected.
-    let (_, cell_dx, cell_dy) = session.held_group_offsets()[1];
+    let (_, cell_dx, cell_dy) = session.held_group_offsets_at(pointer_x, pointer_y)[1];
     let anchor = &session.pieces[1];
     let piece5 = &session.pieces[5];
     let sx = (pointer_x - anchor.base_w / 2 + cell_dx + piece5.target_x - piece5.base_x
@@ -2381,4 +2381,35 @@ fn blend_picture_guide_protects_non_anchor_held_group_pixels_matching_board_bg()
     let (x33, y33) = cell_center_screen(&session, 3, 3);
     let empty_off = (y33 as usize * 320 + x33 as usize) * 4;
     assert_ne!(&rgba[empty_off..empty_off + 4], &bg_rgba);
+}
+
+#[test]
+fn held_group_preview_offsets_match_destination_cell_on_uneven_7x7_grid() {
+    let asset = synthetic_puzzle_asset(1, false);
+    let mut session = PuzzleSession::new(1, asset, 7, false, false, false);
+    let mut audio = AudioEngine::new(Path::new("."), false, false);
+
+    // On a 7x7 grid, col_w = [39, 38, 39, 38, 39, 38, 39]:
+    // c1->c2 spans 38 px, whereas c2->c3 spans 39 px.
+    let idx_11 = 7 + 1;
+    let idx_12 = 7 + 2;
+    pick_piece_from_tray(&mut session, idx_11, &mut audio);
+    let (x11, y11) = cell_center_screen(&session, 1, 1);
+    session.handle_click(x11, y11, &mut audio);
+    pick_piece_from_tray(&mut session, idx_12, &mut audio);
+    let (x12, y12) = cell_center_screen(&session, 1, 2);
+    session.handle_click(x12, y12, &mut audio);
+
+    assert!(session.handle_right_click(x11, y11, &mut audio));
+    assert_eq!(session.held_group.len(), 2);
+
+    // Hovering over (1, 2) must preview piece idx_12 at +39 px (c2->c3), not +38 px (c1->c2).
+    let offsets = session.held_group_offsets_at(x12, y12);
+    assert_eq!(offsets, vec![(idx_11, 0, 0), (idx_12, 39, 0)]);
+
+    // Placing at (1, 2) snaps idx_11 to (1, 2) and idx_12 to (1, 3), 39 px apart.
+    session.handle_click(x12, y12, &mut audio);
+    let (ox1, _) = session.piece_placed_origin(idx_11).unwrap();
+    let (ox2, _) = session.piece_placed_origin(idx_12).unwrap();
+    assert_eq!(ox2 - ox1, 39);
 }

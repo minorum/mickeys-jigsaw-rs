@@ -1888,3 +1888,45 @@ fn f1_during_solved_animation_does_not_play_hint_cue() {
 
     assert!(app.audio.common_caption().is_none());
 }
+
+#[test]
+fn escape_prompts_confirmation_when_all_placed_pieces_are_held_as_group() {
+    let mut app = synthetic_app();
+    let mut session = PuzzleSession::new(1, app.preview_asset.clone(), 4, false, false, false);
+
+    // Place 2 adjacent pieces (0, 1)=1 and (1, 1)=5, then right-click to pick up the entire cluster.
+    for (pidx, r, c) in [(1usize, 0usize, 1usize), (5, 1, 1)] {
+        let pos = session.tray_order.iter().position(|&p| p == pidx).unwrap();
+        session.tray_scroll = pos;
+        session.handle_click(20, 40, &mut app.audio);
+        let col_w = crate::puzzle::grid_col_widths(4);
+        let row_h = crate::puzzle::grid_row_heights(4);
+        let cx = session.playfield_x() + col_w[..c].iter().sum::<i32>() + col_w[c] / 2;
+        let cy = session.playfield_y() + row_h[..r].iter().sum::<i32>() + row_h[r] / 2;
+        session.handle_click(cx, cy, &mut app.audio);
+    }
+    let col_w = crate::puzzle::grid_col_widths(4);
+    let row_h = crate::puzzle::grid_row_heights(4);
+    let x01 = session.playfield_x() + col_w[0] + col_w[1] / 2;
+    let y01 = session.playfield_y() + row_h[0] / 2;
+    assert!(session.handle_right_click(x01, y01, &mut app.audio));
+    assert_eq!(session.held_group.len(), 2);
+    assert!(session.pieces.iter().all(|p| !p.placed));
+
+    app.session = Some(session);
+    app.set_screen(AppScreen::Playing);
+    app.handle_input(&AppInput {
+        escape: true,
+        ..Default::default()
+    });
+
+    assert_eq!(app.screen, AppScreen::Playing);
+    assert!(app.confirm_exit_puzzle);
+    assert!(
+        app.session
+            .as_ref()
+            .unwrap()
+            .status_message()
+            .is_some_and(|m| m.contains("We're not done yet"))
+    );
+}

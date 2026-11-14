@@ -336,7 +336,7 @@ impl PuzzleRenderer {
                 let ax = pointer_x - anchor.base_w / 2 - pfx;
                 let ay = pointer_y - anchor.base_h / 2 - pfy;
                 session
-                    .held_group_offsets()
+                    .held_group_offsets_at(pointer_x, pointer_y)
                     .into_iter()
                     .map(|(gp_idx, cell_dx, cell_dy)| {
                         let piece = &session.pieces[gp_idx];
@@ -492,7 +492,7 @@ impl PuzzleRenderer {
             let anchor = &session.pieces[pidx];
             let ax = pointer_x - anchor.base_w / 2;
             let ay = pointer_y - anchor.base_h / 2;
-            for (gp_idx, cell_dx, cell_dy) in session.held_group_offsets() {
+            for (gp_idx, cell_dx, cell_dy) in session.held_group_offsets_at(pointer_x, pointer_y) {
                 let piece = &session.pieces[gp_idx];
                 let px = ax + cell_dx + piece.target_x - piece.base_x;
                 let py = ay + cell_dy + piece.target_y - piece.base_y;

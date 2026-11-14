@@ -1457,6 +1457,10 @@ impl PuzzleSession {
         self.pieces.iter().any(|p| p.placed)
     }
 
+    pub fn has_unfinished_progress(&self) -> bool {
+        self.has_any_placed_piece() || !self.held_group.is_empty()
+    }
+
     /// Playfield-relative draw origin `(x, y)` for a placed piece, accounting for non-target grid placement.
     pub fn piece_placed_origin(&self, piece_idx: usize) -> Option<(i32, i32)> {
         let piece = self.pieces.get(piece_idx)?;
@@ -1482,15 +1486,28 @@ impl PuzzleSession {
         ))
     }
 
-    /// Returns `(piece_idx, cell_dx, cell_dy)` for each piece in the currently held group relative to `held_piece`.
-    pub fn held_group_offsets(&self) -> Vec<(usize, i32, i32)> {
+    /// Returns `(piece_idx, cell_dx, cell_dy)` for each piece in the currently held group relative to `held_piece`,
+    /// using the destination anchor cell under `(pointer_x, pointer_y)` when valid on the grid.
+    pub fn held_group_offsets_at(&self, pointer_x: i32, pointer_y: i32) -> Vec<(usize, i32, i32)> {
         let Some(anchor_idx) = self.held_piece else {
             return Vec::new();
         };
         if self.held_group.len() <= 1 || self.grid_dim <= 1 {
             return vec![(anchor_idx, 0, 0)];
         }
-        let Some((anchor_r, anchor_c)) = self.held_group_anchor else {
+        let dim_i32 = self.grid_dim as i32;
+        let dest_anchor = self
+            .grid_cell_at(
+                pointer_x - self.playfield_x(),
+                pointer_y - self.playfield_y(),
+            )
+            .filter(|&(dr_cell, dc_cell)| {
+                self.held_group.iter().all(|&(_, dr, dc)| {
+                    (0..dim_i32).contains(&(dr_cell as i32 + dr))
+                        && (0..dim_i32).contains(&(dc_cell as i32 + dc))
+                })
+            });
+        let Some((anchor_r, anchor_c)) = dest_anchor.or(self.held_group_anchor) else {
             return vec![(anchor_idx, 0, 0)];
         };
         let dim = self.grid_dim;
