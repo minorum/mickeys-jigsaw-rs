@@ -106,7 +106,7 @@ impl FontAsset {
         }
 
         let mut pos = 405usize;
-        let mut bitmap = Vec::with_capacity(usize::from(height) * stride_bytes);
+        let mut bitmap = Vec::new();
         for _ in 0..height {
             let row_len = usize::from(*data.get(pos).ok_or("Truncated font row")?);
             let row_end = pos + row_len;
@@ -1628,8 +1628,33 @@ mod tests {
     }
 
     #[test]
+    fn font_rejects_extreme_dimensions_without_eager_allocation() {
+        let mut data = vec![0u8; 405];
+        data[0..4].copy_from_slice(b"FONT");
+        data[16..18].copy_from_slice(&u16::MAX.to_le_bytes());
+        data[18..20].copy_from_slice(&u16::MAX.to_le_bytes());
+        assert!(FontAsset::from_bytes(&data).is_err());
+    }
+
+    #[test]
     fn preferences_roundtrip_and_rejects_short_file() {
-        let tmp = std::env::temp_dir().join("mjp_test_prefs_roundtrip.pre");
+        struct TempDirGuard(std::path::PathBuf);
+        impl Drop for TempDirGuard {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("mjp_test_prefs_{}_{unique}", std::process::id()));
+        fs::create_dir(&dir).unwrap();
+        let _guard = TempDirGuard(dir.clone());
+        let tmp = dir.join("MJP.PRE");
+
         let prefs = Preferences {
             video_mode: 2,
             control_mode: 0,
@@ -1640,6 +1665,5 @@ mod tests {
         assert_eq!(Preferences::load(&tmp).unwrap(), prefs);
         fs::write(&tmp, [0u8; 27]).unwrap();
         assert!(Preferences::load(&tmp).is_err());
-        let _ = fs::remove_file(&tmp);
     }
 }
