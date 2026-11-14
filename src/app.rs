@@ -127,6 +127,72 @@ impl BrowserTarget {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InGameMenuCommand {
+    OtherPicture,
+    Setup,
+    PieceTray,
+    Replay,
+    Quit,
+    Resume,
+}
+
+impl InGameMenuCommand {
+    pub const ALL: [Self; 6] = [
+        Self::OtherPicture,
+        Self::Setup,
+        Self::PieceTray,
+        Self::Replay,
+        Self::Quit,
+        Self::Resume,
+    ];
+
+    pub fn sprite_idx(self) -> Option<usize> {
+        match self {
+            Self::OtherPicture => Some(5),
+            Self::Setup => Some(6),
+            Self::PieceTray => Some(7),
+            Self::Replay => Some(8),
+            Self::Quit => Some(9),
+            Self::Resume => None,
+        }
+    }
+}
+
+pub const IN_GAME_MENU_X: i32 = 84;
+pub const IN_GAME_MENU_Y: i32 = 26;
+pub const IN_GAME_MENU_W: i32 = 152;
+pub const IN_GAME_MENU_H: i32 = 148;
+pub const IN_GAME_MENU_ROW_X: i32 = 92;
+pub const IN_GAME_MENU_ROW_Y0: i32 = 46;
+pub const IN_GAME_MENU_ROW_W: i32 = 136;
+pub const IN_GAME_MENU_ROW_H: i32 = 18;
+pub const IN_GAME_MENU_ROW_STEP: i32 = 20;
+
+pub fn in_game_menu_row_rect(idx: usize) -> (i32, i32, i32, i32) {
+    (
+        IN_GAME_MENU_ROW_X,
+        IN_GAME_MENU_ROW_Y0 + idx as i32 * IN_GAME_MENU_ROW_STEP,
+        IN_GAME_MENU_ROW_W,
+        IN_GAME_MENU_ROW_H,
+    )
+}
+
+pub fn in_game_menu_command_at(mx: i32, my: i32) -> Option<InGameMenuCommand> {
+    for (idx, cmd) in InGameMenuCommand::ALL.into_iter().enumerate() {
+        let (x, y, w, h) = in_game_menu_row_rect(idx);
+        if (x..x + w).contains(&mx) && (y..y + h).contains(&my) {
+            return Some(cmd);
+        }
+    }
+    None
+}
+
+pub fn in_game_menu_contains(mx: i32, my: i32) -> bool {
+    (IN_GAME_MENU_X..IN_GAME_MENU_X + IN_GAME_MENU_W).contains(&mx)
+        && (IN_GAME_MENU_Y..IN_GAME_MENU_Y + IN_GAME_MENU_H).contains(&my)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppScreen {
     Title,
     Credits { page: usize },
@@ -157,6 +223,7 @@ pub enum PresentSignature {
         app_rev: u64,
         puzzle: PuzzlePresentKey,
         caption_key: Option<u64>,
+        menu_state: Option<(usize, Option<InGameMenuCommand>, Option<InGameMenuCommand>)>,
     },
 }
 
@@ -261,6 +328,10 @@ pub struct GameApp {
     pub session: Option<PuzzleSession>,
     pub session_use_ega: bool,
     pub confirm_exit_puzzle: bool,
+    pub confirm_quit_puzzle: bool,
+    pub in_game_menu_open: bool,
+    pub in_game_menu_selected: usize,
+    pub in_game_menu_pressed: Option<InGameMenuCommand>,
     pub browser_status: Option<(String, f32)>,
     pub browser_hover: Option<BrowserTarget>,
     pub browser_pressed: Option<BrowserTarget>,
@@ -326,6 +397,10 @@ impl GameApp {
             session: None,
             session_use_ega: use_ega,
             confirm_exit_puzzle: false,
+            confirm_quit_puzzle: false,
+            in_game_menu_open: false,
+            in_game_menu_selected: 0,
+            in_game_menu_pressed: None,
             browser_status: None,
             browser_hover: None,
             browser_pressed: None,
@@ -375,6 +450,10 @@ impl GameApp {
             session: None,
             session_use_ega: use_ega,
             confirm_exit_puzzle: false,
+            confirm_quit_puzzle: false,
+            in_game_menu_open: false,
+            in_game_menu_selected: 0,
+            in_game_menu_pressed: None,
             browser_status: None,
             browser_hover: None,
             browser_pressed: None,
@@ -420,12 +499,18 @@ impl GameApp {
             session.cancel_pointer_drag();
         }
         self.confirm_exit_puzzle = false;
+        self.confirm_quit_puzzle = false;
+        self.in_game_menu_open = false;
+        self.in_game_menu_pressed = None;
         self.audio.stop_all();
         self.audio.play_common(CommonSound::OtherPicture);
         self.set_screen(AppScreen::Browser);
     }
 
     fn return_to_browser(&mut self) {
+        self.in_game_menu_open = false;
+        self.in_game_menu_pressed = None;
+        self.confirm_quit_puzzle = false;
         let unfinished = self
             .session
             .as_ref()
@@ -444,6 +529,114 @@ impl GameApp {
             return;
         }
         self.do_return_to_browser();
+    }
+
+    pub fn open_in_game_menu(&mut self) {
+        if self.screen != AppScreen::Playing {
+            return;
+        }
+        if let Some(sess) = &mut self.session {
+            sess.cancel_pointer_drag();
+            sess.pressed_toolbox_target = None;
+        }
+        self.in_game_menu_open = true;
+        self.in_game_menu_selected = 0;
+        self.in_game_menu_pressed = None;
+        self.audio.play_ui_click();
+        self.bump_rev();
+    }
+
+    pub fn close_in_game_menu(&mut self, play_cancel: bool) {
+        self.in_game_menu_open = false;
+        self.in_game_menu_pressed = None;
+        if play_cancel {
+            self.audio.play_common(CommonSound::Cancel);
+        }
+        self.bump_rev();
+    }
+
+    pub fn is_in_game_menu_command_enabled(&self, cmd: InGameMenuCommand) -> bool {
+        match cmd {
+            InGameMenuCommand::PieceTray => self.session.as_ref().is_some_and(|s| !s.solved),
+            InGameMenuCommand::Replay => self.session.as_ref().is_some_and(|s| s.solved),
+            _ => true,
+        }
+    }
+
+    fn step_in_game_menu_selection(&mut self, delta: isize) {
+        let len = InGameMenuCommand::ALL.len() as isize;
+        let mut idx = self.in_game_menu_selected as isize;
+        for _ in 0..len {
+            idx = (idx + delta).rem_euclid(len);
+            let cmd = InGameMenuCommand::ALL[idx as usize];
+            if self.is_in_game_menu_command_enabled(cmd) {
+                self.in_game_menu_selected = idx as usize;
+                self.audio.play_ui_click();
+                self.bump_rev();
+                return;
+            }
+        }
+    }
+
+    pub fn execute_in_game_menu_command(&mut self, cmd: InGameMenuCommand) {
+        if !self.is_in_game_menu_command_enabled(cmd) {
+            self.audio.play_error();
+            return;
+        }
+        self.in_game_menu_open = false;
+        self.in_game_menu_pressed = None;
+        match cmd {
+            InGameMenuCommand::OtherPicture => self.return_to_browser(),
+            InGameMenuCommand::Setup => self.open_setup(true),
+            InGameMenuCommand::PieceTray => {
+                if let Some(sess) = &mut self.session {
+                    if sess.held_piece.is_some() {
+                        if sess.held_group.is_empty() {
+                            sess.return_held_to_tray(&mut self.audio);
+                            if !sess.toolbox_open {
+                                sess.toggle_toolbox();
+                            }
+                        } else {
+                            self.audio.play_error();
+                        }
+                    } else {
+                        sess.toggle_toolbox();
+                        self.audio.play_ui_click();
+                    }
+                }
+                self.bump_rev();
+            }
+            InGameMenuCommand::Replay => {
+                if let Some(sess) = &mut self.session {
+                    sess.replay_sequence(&mut self.audio);
+                }
+                self.bump_rev();
+            }
+            InGameMenuCommand::Quit => self.request_quit_from_puzzle(),
+            InGameMenuCommand::Resume => {
+                self.audio.play_common(CommonSound::Cancel);
+                self.bump_rev();
+            }
+        }
+    }
+
+    pub fn request_quit_from_puzzle(&mut self) {
+        self.in_game_menu_open = false;
+        self.in_game_menu_pressed = None;
+        self.confirm_exit_puzzle = false;
+        if self.confirm_quit_puzzle {
+            return;
+        }
+        self.confirm_quit_puzzle = true;
+        let solved = self.session.as_ref().is_some_and(|s| s.solved);
+        if !solved {
+            self.audio.play_common(CommonSound::NotDoneYet);
+        }
+        if let Some(sess) = &mut self.session {
+            sess.cancel_pointer_drag();
+            sess.status_message = Some(("Quit game? (Enter/Click=Yes, Esc=No)".to_string(), 8.0));
+        }
+        self.bump_rev();
     }
 
     pub fn reload_preview(&mut self) {
@@ -626,6 +819,10 @@ impl GameApp {
     }
 
     pub fn open_setup(&mut self, return_to_playing: bool) {
+        self.in_game_menu_open = false;
+        self.in_game_menu_pressed = None;
+        self.confirm_exit_puzzle = false;
+        self.confirm_quit_puzzle = false;
         self.setup_menu.set_prefs(self.prefs);
         self.setup_menu.clear_error();
         self.set_screen(AppScreen::Setup { return_to_playing });
@@ -783,12 +980,21 @@ impl GameApp {
                 }
             }
             AppScreen::Playing => {
-                if self.confirm_exit_puzzle {
+                if self.confirm_exit_puzzle || self.confirm_quit_puzzle {
                     if input.enter || input.left_pressed {
-                        self.confirm_exit_puzzle = false;
-                        self.do_return_to_browser();
+                        if self.confirm_quit_puzzle {
+                            self.confirm_quit_puzzle = false;
+                            if let Some(sess) = &mut self.session {
+                                sess.status_message = None;
+                            }
+                            self.request_quit();
+                        } else {
+                            self.confirm_exit_puzzle = false;
+                            self.do_return_to_browser();
+                        }
                     } else if input.escape {
                         self.confirm_exit_puzzle = false;
+                        self.confirm_quit_puzzle = false;
                         self.audio.play_common(CommonSound::Cancel);
                         if let Some(sess) = &mut self.session {
                             sess.status_message = None;
@@ -797,8 +1003,113 @@ impl GameApp {
                     }
                     return;
                 }
+                if self.in_game_menu_open {
+                    if let Some(sess) = &mut self.session {
+                        if input.pointer_moved
+                            && input.move_x == 0
+                            && input.move_y == 0
+                            && !input.enter
+                        {
+                            sess.clear_keyboard_pointer();
+                        }
+                        if !input.left_pressed
+                            && !input.right_pressed
+                            && (input.move_x != 0 || input.move_y != 0)
+                        {
+                            sess.move_keyboard_pointer(
+                                input.move_x as f32,
+                                input.move_y as f32,
+                                dt,
+                            );
+                        }
+                    }
+                    let (px, py) = self
+                        .session
+                        .as_ref()
+                        .map_or((input.pointer_x, input.pointer_y), |s| {
+                            s.active_pointer(input.pointer_x, input.pointer_y)
+                        });
+                    if (input.pointer_moved || input.move_x != 0 || input.move_y != 0)
+                        && let Some(cmd) = in_game_menu_command_at(px, py)
+                        && self.is_in_game_menu_command_enabled(cmd)
+                        && let Some(idx) = InGameMenuCommand::ALL.iter().position(|&c| c == cmd)
+                        && self.in_game_menu_selected != idx
+                    {
+                        self.in_game_menu_selected = idx;
+                        self.bump_rev();
+                    }
+                    if input.escape {
+                        self.close_in_game_menu(true);
+                        return;
+                    }
+                    if input.up {
+                        self.step_in_game_menu_selection(-1);
+                        return;
+                    }
+                    if input.down {
+                        self.step_in_game_menu_selection(1);
+                        return;
+                    }
+                    if input.key_r
+                        && self.is_in_game_menu_command_enabled(InGameMenuCommand::Replay)
+                    {
+                        self.execute_in_game_menu_command(InGameMenuCommand::Replay);
+                        return;
+                    }
+                    if input.key_q {
+                        self.execute_in_game_menu_command(InGameMenuCommand::Quit);
+                        return;
+                    }
+                    if input.enter || input.space {
+                        let cmd = InGameMenuCommand::ALL[self.in_game_menu_selected];
+                        self.execute_in_game_menu_command(cmd);
+                        return;
+                    }
+                    if input.left_pressed {
+                        if let Some(sess) = &mut self.session {
+                            sess.clear_keyboard_pointer();
+                        }
+                        if let Some(cmd) = in_game_menu_command_at(input.pointer_x, input.pointer_y)
+                        {
+                            if self.is_in_game_menu_command_enabled(cmd) {
+                                self.in_game_menu_pressed = Some(cmd);
+                                if let Some(idx) =
+                                    InGameMenuCommand::ALL.iter().position(|&c| c == cmd)
+                                {
+                                    self.in_game_menu_selected = idx;
+                                }
+                                self.bump_rev();
+                            } else {
+                                self.audio.play_error();
+                            }
+                        } else if !in_game_menu_contains(input.pointer_x, input.pointer_y) {
+                            self.close_in_game_menu(true);
+                        }
+                        return;
+                    }
+                    if input.left_released {
+                        if let Some(sess) = &mut self.session {
+                            sess.clear_keyboard_pointer();
+                        }
+                        if let Some(pressed_cmd) = self.in_game_menu_pressed.take() {
+                            if in_game_menu_command_at(input.pointer_x, input.pointer_y)
+                                == Some(pressed_cmd)
+                            {
+                                self.execute_in_game_menu_command(pressed_cmd);
+                            } else {
+                                self.bump_rev();
+                            }
+                        }
+                        return;
+                    }
+                    return;
+                }
                 if input.escape {
                     self.return_to_browser();
+                    return;
+                }
+                if input.key_q {
+                    self.request_quit_from_puzzle();
                     return;
                 }
                 let mut open_menu = false;
@@ -922,6 +1233,9 @@ impl GameApp {
                         ));
                         self.app_rev = self.app_rev.wrapping_add(1);
                     }
+                    if input.key_r && sess.replay_sequence(&mut self.audio) {
+                        self.app_rev = self.app_rev.wrapping_add(1);
+                    }
                     if input.up || input.wheel_delta > 0 {
                         sess.scroll_tray(-1);
                     }
@@ -949,7 +1263,7 @@ impl GameApp {
                 }
 
                 if open_menu {
-                    self.return_to_browser();
+                    self.open_in_game_menu();
                 }
             }
         }
@@ -1010,10 +1324,26 @@ impl GameApp {
                         asset_rev: session.asset_rev(),
                     }
                 } else {
+                    let menu_state = self.in_game_menu_open.then(|| {
+                        let (px, py) = session.active_pointer(mx, my);
+                        let hovered = in_game_menu_command_at(px, py)
+                            .filter(|&cmd| self.is_in_game_menu_command_enabled(cmd));
+                        (
+                            self.in_game_menu_selected,
+                            hovered,
+                            self.in_game_menu_pressed,
+                        )
+                    });
+                    let (board_mx, board_my) = if self.in_game_menu_open {
+                        (-1, -1)
+                    } else {
+                        (mx, my)
+                    };
                     PresentSignature::Playing {
                         app_rev: self.app_rev,
-                        puzzle: session.present_key(mx, my, picture_guide),
+                        puzzle: session.present_key(board_mx, board_my, picture_guide),
                         caption_key,
+                        menu_state,
                     }
                 }
             }
@@ -1084,7 +1414,9 @@ impl AppRenderer {
         }
         let sprite_idx = match app.screen {
             AppScreen::Playing => match app.session.as_ref() {
-                Some(_) if app.confirm_exit_puzzle => 62,
+                Some(_) if app.confirm_exit_puzzle || app.confirm_quit_puzzle => 62,
+                Some(_) if app.in_game_menu_pressed.is_some() => 63,
+                Some(_) if app.in_game_menu_open => 62,
                 Some(sess)
                     if sess.held_piece.is_some() || sess.pressed_toolbox_target.is_some() =>
                 {
@@ -1584,8 +1916,24 @@ impl AppRenderer {
                     } else {
                         &app.tbx
                     };
-                    let (px, py) = sess.active_pointer(mx, my);
+                    let (px, py) = if app.in_game_menu_open {
+                        (-1, -1)
+                    } else {
+                        sess.active_pointer(mx, my)
+                    };
                     puzzle_renderer.render(sess, fb, toolbox, &app.font, px, py);
+                    if app.in_game_menu_open {
+                        let (mpx, mpy) = sess.active_pointer(mx, my);
+                        render_in_game_menu(
+                            app,
+                            sess,
+                            fb,
+                            toolbox,
+                            puzzle_renderer.tbx_remap(),
+                            mpx,
+                            mpy,
+                        );
+                    }
                 }
             }
         }
@@ -1626,6 +1974,118 @@ impl AppRenderer {
                 fb.fill_rect(0, 20, SCREEN_W, 26, black);
                 fb.draw_text(&app.font, "Asset load failed (see terminal)", 5, 23, white);
             }
+        }
+    }
+}
+
+fn render_in_game_menu(
+    app: &GameApp,
+    sess: &PuzzleSession,
+    fb: &mut Framebuffer,
+    tbx: &ToolboxAsset,
+    tbx_remap: &[u8; 256],
+    mx: i32,
+    my: i32,
+) {
+    let black = fb.color_index([0, 0, 0]);
+    let white = fb.color_index([255, 255, 255]);
+    let gray = fb.color_index([48, 48, 48]);
+    let card = fb.color_index([85, 85, 85]);
+    let hover = fb.color_index([170, 170, 170]);
+    let hi = fb.color_index([220, 220, 228]);
+    let lo = fb.color_index([40, 40, 48]);
+    let yellow = fb.color_index([255, 255, 85]);
+    let disabled_fg = fb.color_index([128, 128, 128]);
+
+    fb.fill_rect(
+        IN_GAME_MENU_X,
+        IN_GAME_MENU_Y,
+        IN_GAME_MENU_W,
+        IN_GAME_MENU_H,
+        black,
+    );
+    crate::puzzle_render::draw_beveled_box(
+        fb,
+        IN_GAME_MENU_X + 1,
+        IN_GAME_MENU_Y + 1,
+        IN_GAME_MENU_W - 2,
+        IN_GAME_MENU_H - 2,
+        gray,
+        hi,
+        lo,
+        false,
+        false,
+        yellow,
+        white,
+    );
+    let title = "MENU";
+    let title_w = app.font.measure_text(title);
+    fb.draw_text_shadowed(
+        &app.font,
+        title,
+        IN_GAME_MENU_X + (IN_GAME_MENU_W - title_w) / 2,
+        IN_GAME_MENU_Y + 6,
+        black,
+        yellow,
+    );
+
+    let hovered_cmd = in_game_menu_command_at(mx, my);
+    for (idx, cmd) in InGameMenuCommand::ALL.into_iter().enumerate() {
+        let (rx, ry, rw, rh) = in_game_menu_row_rect(idx);
+        let enabled = app.is_in_game_menu_command_enabled(cmd);
+        let is_hovered = enabled && hovered_cmd == Some(cmd);
+        let is_pressed = enabled && app.in_game_menu_pressed == Some(cmd);
+        let is_selected = enabled && app.in_game_menu_selected == idx;
+        let bg = if !enabled {
+            gray
+        } else if (is_hovered || is_selected) && !is_pressed {
+            hover
+        } else {
+            card
+        };
+        crate::puzzle_render::draw_beveled_box(
+            fb,
+            rx,
+            ry,
+            rw,
+            rh,
+            bg,
+            hi,
+            lo,
+            is_pressed,
+            is_hovered || is_selected,
+            yellow,
+            white,
+        );
+        if let Some(spr_idx) = cmd.sprite_idx()
+            && let Some(spr) = tbx.sprites.get(spr_idx)
+        {
+            fb.set_clip(rx + 2, ry + 1, 18, rh - 2);
+            fb.blit_sprite_remapped(spr, rx + 2, ry + 1, 0, tbx_remap);
+            fb.reset_clip();
+        }
+        let label = match cmd {
+            InGameMenuCommand::OtherPicture => "Other Picture",
+            InGameMenuCommand::Setup => "Setup (F4)",
+            InGameMenuCommand::PieceTray => {
+                if sess.held_piece.is_some() {
+                    "Return Piece"
+                } else if sess.toolbox_open {
+                    "Hide Tray"
+                } else {
+                    "Show Tray"
+                }
+            }
+            InGameMenuCommand::Replay => "Replay (R)",
+            InGameMenuCommand::Quit => "Quit (Q)",
+            InGameMenuCommand::Resume => "Resume (Esc)",
+        };
+        let text_x = rx + 24;
+        let text_y = ry + 5;
+        if enabled {
+            fb.draw_text_shadowed(&app.font, label, text_x, text_y, black, white);
+        } else {
+            fb.draw_text(&app.font, label, text_x, text_y, disabled_fg);
         }
     }
 }

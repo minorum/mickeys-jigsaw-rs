@@ -2702,3 +2702,402 @@ fn vga_ega_switch_during_unfinished_puzzle_remaps_toolbox_and_border() {
     }
     panic!("tbx[49] had no opaque pixel");
 }
+
+#[test]
+fn in_game_menu_opens_closes_and_navigates_keyboard_and_mouse() {
+    let mut app = synthetic_app();
+    while app.tbx.sprites.len() <= 64 {
+        app.tbx.sprites.push(crate::assets::Sprite8061::from_8bpp(
+            16,
+            16,
+            0,
+            vec![1; 256],
+            vec![true; 256],
+        ));
+    }
+    let session = PuzzleSession::new(1, app.preview_asset.clone(), 2, true, false, true);
+    app.session = Some(session);
+    app.set_screen(AppScreen::Playing);
+
+    // Click MENU button in open toolbox (20, 8) -> press + release opens menu.
+    app.handle_input(&AppInput {
+        pointer_x: 20,
+        pointer_y: 8,
+        left_pressed: true,
+        ..Default::default()
+    });
+    assert!(app.in_game_menu_open);
+    app.handle_input(&AppInput {
+        pointer_x: 20,
+        pointer_y: 8,
+        left_released: true,
+        ..Default::default()
+    });
+    assert!(app.in_game_menu_open);
+    assert_eq!(app.in_game_menu_selected, 0);
+
+    // Cursor is pointing hand (62) over menu; present_signature tracks hover/press.
+    let mut renderer = AppRenderer::new();
+    renderer.render_if_needed(&app, 120, 54, false, false);
+    assert_eq!(
+        AppRenderer::desired_cursor(&app, 120, 54, false),
+        Some((62, 114, 54))
+    );
+    let sig_hover0 = app.present_signature(120, 54, false, false);
+    let sig_hover1 = app.present_signature(120, 74, false, false);
+    assert_ne!(sig_hover0, sig_hover1);
+
+    // Down skips disabled Replay (when unsolved) and wraps cleanly.
+    // Enabled items when unsolved: 0 OtherPicture, 1 Setup, 2 PieceTray, 4 Quit, 5 Resume.
+    for expected in [1, 2, 4, 5, 0] {
+        app.handle_input(&AppInput {
+            down: true,
+            ..Default::default()
+        });
+        assert_eq!(app.in_game_menu_selected, expected);
+    }
+    app.handle_input(&AppInput {
+        up: true,
+        ..Default::default()
+    });
+    assert_eq!(app.in_game_menu_selected, 5);
+
+    // Press on Resume, drag off before release -> does NOT close menu.
+    let (rx, ry, _, _) = crate::app::in_game_menu_row_rect(5);
+    app.handle_input(&AppInput {
+        pointer_x: rx + 10,
+        pointer_y: ry + 5,
+        left_pressed: true,
+        ..Default::default()
+    });
+    assert_eq!(
+        app.in_game_menu_pressed,
+        Some(crate::app::InGameMenuCommand::Resume)
+    );
+    assert_eq!(
+        AppRenderer::desired_cursor(&app, rx + 10, ry + 5, false),
+        Some((63, rx, ry + 5))
+    );
+    app.handle_input(&AppInput {
+        pointer_x: rx + 10,
+        pointer_y: ry + 40,
+        left_released: true,
+        ..Default::default()
+    });
+    assert!(app.in_game_menu_open);
+    assert!(app.in_game_menu_pressed.is_none());
+
+    // Clicking outside menu panel closes it cleanly.
+    app.handle_input(&AppInput {
+        pointer_x: 10,
+        pointer_y: 10,
+        left_pressed: true,
+        ..Default::default()
+    });
+    assert!(!app.in_game_menu_open);
+
+    // Re-open and close with Escape; keyboard-to-mouse switching clears keyboard pointer.
+    app.open_in_game_menu();
+    app.handle_input(&AppInput {
+        dt: 0.1,
+        move_x: 1,
+        ..Default::default()
+    });
+    assert!(app.session.as_ref().unwrap().keyboard_pointer.is_some());
+    app.handle_input(&AppInput {
+        pointer_x: 120,
+        pointer_y: 54,
+        pointer_moved: true,
+        ..Default::default()
+    });
+    assert!(app.session.as_ref().unwrap().keyboard_pointer.is_none());
+    app.handle_input(&AppInput {
+        escape: true,
+        ..Default::default()
+    });
+    assert!(!app.in_game_menu_open);
+
+    // Stationary pointer over disabled Replay (row 3) or OtherPicture (row 0)
+    // must not override keyboard Down + Enter selection of Setup (row 1).
+    app.open_in_game_menu();
+    let (r0x, r0y, _, _) = crate::app::in_game_menu_row_rect(0);
+    let (r3x, r3y, _, _) = crate::app::in_game_menu_row_rect(3);
+    app.handle_input(&AppInput {
+        pointer_x: r3x + 10,
+        pointer_y: r3y + 5,
+        pointer_moved: true,
+        ..Default::default()
+    });
+    assert_eq!(app.in_game_menu_selected, 0);
+    app.handle_input(&AppInput {
+        pointer_x: r0x + 10,
+        pointer_y: r0y + 5,
+        down: true,
+        ..Default::default()
+    });
+    assert_eq!(app.in_game_menu_selected, 1);
+    app.handle_input(&AppInput {
+        pointer_x: r0x + 10,
+        pointer_y: r0y + 5,
+        enter: true,
+        ..Default::default()
+    });
+    assert!(matches!(app.screen, AppScreen::Setup { .. }));
+    assert!(!app.in_game_menu_open);
+    app.exit_setup(true);
+
+    // WASD then physical mouse click *without* pointer_moved clears keyboard pointer
+    // and hits physical mouse coordinates instead of stale keyboard pointer.
+    app.open_in_game_menu();
+    app.handle_input(&AppInput {
+        dt: 0.1,
+        move_x: 1,
+        ..Default::default()
+    });
+    assert!(app.session.as_ref().unwrap().keyboard_pointer.is_some());
+    let (r1x, r1y, _, _) = crate::app::in_game_menu_row_rect(1);
+    app.handle_input(&AppInput {
+        pointer_x: r1x + 10,
+        pointer_y: r1y + 5,
+        left_pressed: true,
+        ..Default::default()
+    });
+    assert!(app.session.as_ref().unwrap().keyboard_pointer.is_none());
+    app.handle_input(&AppInput {
+        pointer_x: r1x + 10,
+        pointer_y: r1y + 5,
+        left_released: true,
+        ..Default::default()
+    });
+    assert!(matches!(app.screen, AppScreen::Setup { .. }));
+    app.exit_setup(true);
+
+    // Menu UI clicks (open, Up/Down, empty-handed PieceTray) must not interrupt active captions/speech.
+    app.audio.play_common(crate::audio::CommonSound::NotDoneYet);
+    let active_caption = app.audio.common_caption();
+    assert!(active_caption.is_some());
+    app.open_in_game_menu();
+    assert_eq!(app.audio.common_caption(), active_caption);
+    app.handle_input(&AppInput {
+        down: true,
+        ..Default::default()
+    });
+    assert_eq!(app.audio.common_caption(), active_caption);
+    app.execute_in_game_menu_command(crate::app::InGameMenuCommand::PieceTray);
+    assert_eq!(app.audio.common_caption(), active_caption);
+}
+
+#[test]
+fn in_game_menu_commands_other_picture_setup_tray_replay_and_quit() {
+    let mut app = synthetic_app();
+    let mut session = PuzzleSession::new(1, app.preview_asset.clone(), 2, true, false, true);
+    // Pick up piece 0 from tray and place piece 1 on board to create unfinished state + held piece.
+    session.held_piece = session.tray_order.pop();
+    session.pieces[1].placed = true;
+    session.elapsed_secs = 42.5;
+    let held_id = session.held_piece;
+    app.session = Some(session);
+    app.set_screen(AppScreen::Playing);
+
+    // 1. Setup from menu preserves active puzzle, held piece, and timer.
+    app.open_in_game_menu();
+    let (sx, sy, _, _) = crate::app::in_game_menu_row_rect(1);
+    app.handle_input(&AppInput {
+        pointer_x: sx + 8,
+        pointer_y: sy + 6,
+        left_pressed: true,
+        ..Default::default()
+    });
+    app.handle_input(&AppInput {
+        pointer_x: sx + 8,
+        pointer_y: sy + 6,
+        left_released: true,
+        ..Default::default()
+    });
+    assert_eq!(
+        app.screen,
+        AppScreen::Setup {
+            return_to_playing: true
+        }
+    );
+    app.exit_setup(true);
+    assert_eq!(app.screen, AppScreen::Playing);
+    assert!(!app.in_game_menu_open);
+    {
+        let sess = app.session.as_ref().unwrap();
+        assert_eq!(sess.held_piece, held_id);
+        assert!(sess.pieces[1].placed);
+        assert!((sess.elapsed_secs - 42.5).abs() < 1e-4);
+    }
+
+    // 2. Replay is disabled while unsolved (both menu click and R hotkey).
+    app.open_in_game_menu();
+    let (rx, ry, _, _) = crate::app::in_game_menu_row_rect(3);
+    app.handle_input(&AppInput {
+        pointer_x: rx + 8,
+        pointer_y: ry + 6,
+        left_pressed: true,
+        ..Default::default()
+    });
+    assert!(app.in_game_menu_open);
+    assert!(app.session.as_ref().unwrap().active_anim.is_none());
+    app.close_in_game_menu(false);
+    app.handle_input(&AppInput {
+        key_r: true,
+        ..Default::default()
+    });
+    assert!(app.session.as_ref().unwrap().active_anim.is_none());
+
+    // 3. PieceTray returns held single piece when holding one, preserves held connected groups,
+    //    and toggles tray when empty-handed.
+    let tray_snapshot_before_group = {
+        let sess = app.session.as_mut().unwrap();
+        let extra = sess.tray_order.pop().unwrap();
+        sess.held_group = vec![(extra, 10, 0)];
+        (extra, sess.tray_order.clone())
+    };
+    app.execute_in_game_menu_command(crate::app::InGameMenuCommand::PieceTray);
+    {
+        let sess = app.session.as_mut().unwrap();
+        assert_eq!(sess.held_piece, held_id);
+        assert_eq!(sess.held_group, vec![(tray_snapshot_before_group.0, 10, 0)]);
+        assert_eq!(sess.tray_order, tray_snapshot_before_group.1);
+        // Restore single held piece for single-piece PieceTray test.
+        let (extra, _, _) = sess.held_group.pop().unwrap();
+        sess.tray_order.push(extra);
+    }
+    app.execute_in_game_menu_command(crate::app::InGameMenuCommand::PieceTray);
+    {
+        let sess = app.session.as_ref().unwrap();
+        assert!(sess.held_piece.is_none());
+        assert!(sess.toolbox_open);
+        assert_eq!(sess.tray_order.first().copied(), held_id);
+    }
+    app.execute_in_game_menu_command(crate::app::InGameMenuCommand::PieceTray);
+    assert!(!app.session.as_ref().unwrap().toolbox_open);
+    app.execute_in_game_menu_command(crate::app::InGameMenuCommand::PieceTray);
+    assert!(app.session.as_ref().unwrap().toolbox_open);
+
+    // 4. Other Picture prompts unfinished confirmation; cancel preserves state, confirm returns to Browser.
+    app.execute_in_game_menu_command(crate::app::InGameMenuCommand::OtherPicture);
+    assert!(app.confirm_exit_puzzle);
+    assert_eq!(app.audio.common_caption(), Some("We're not done yet."));
+    app.handle_input(&AppInput {
+        escape: true,
+        ..Default::default()
+    });
+    assert!(!app.confirm_exit_puzzle);
+    assert_eq!(app.screen, AppScreen::Playing);
+    assert!(app.session.as_ref().unwrap().pieces[1].placed);
+
+    // 5. Quit from unfinished puzzle prompts confirmation, cancel preserves state, confirm quits.
+    app.handle_input(&AppInput {
+        key_q: true,
+        ..Default::default()
+    });
+    assert!(app.confirm_quit_puzzle);
+    assert!(!app.quit_requested);
+    assert_eq!(app.audio.common_caption(), Some("We're not done yet."));
+    app.handle_input(&AppInput {
+        escape: true,
+        ..Default::default()
+    });
+    assert!(!app.confirm_quit_puzzle);
+    assert!(!app.quit_requested);
+    assert!(app.session.as_ref().unwrap().pieces[1].placed);
+
+    app.execute_in_game_menu_command(crate::app::InGameMenuCommand::Quit);
+    assert!(app.confirm_quit_puzzle);
+    app.handle_input(&AppInput {
+        enter: true,
+        ..Default::default()
+    });
+    assert!(!app.confirm_quit_puzzle);
+    assert!(app.quit_requested);
+}
+
+#[test]
+fn in_game_solved_replay_and_quit_behavior() {
+    let mut app = synthetic_app();
+    let mut session = PuzzleSession::new(1, app.preview_asset.clone(), 2, true, false, true);
+    session.auto_solve(&mut app.audio);
+    session.active_anim = None;
+    app.session = Some(session);
+    app.set_screen(AppScreen::Playing);
+
+    // PieceTray is disabled when solved; Replay is enabled.
+    assert!(!app.is_in_game_menu_command_enabled(crate::app::InGameMenuCommand::PieceTray));
+    assert!(app.is_in_game_menu_command_enabled(crate::app::InGameMenuCommand::Replay));
+
+    // Clicking top-left menu hotspot when solved opens the command menu.
+    app.handle_input(&AppInput {
+        pointer_x: 5,
+        pointer_y: 5,
+        left_pressed: true,
+        ..Default::default()
+    });
+    assert!(app.in_game_menu_open);
+
+    // Replay starts animation and plays SeeWhatHappens ("Let's see what happens.").
+    app.execute_in_game_menu_command(crate::app::InGameMenuCommand::Replay);
+    assert!(!app.in_game_menu_open);
+    assert!(app.session.as_ref().unwrap().active_anim.is_some());
+    assert_eq!(app.audio.common_caption(), Some("Let's see what happens."));
+
+    // Repeated R hotkey restarts cleanly.
+    app.handle_input(&AppInput {
+        key_r: true,
+        ..Default::default()
+    });
+    assert!(app.session.as_ref().unwrap().active_anim.is_some());
+
+    // Quit when solved asks confirmation WITHOUT playing "We're not done yet."
+    app.audio.stop_all();
+    app.handle_input(&AppInput {
+        key_q: true,
+        ..Default::default()
+    });
+    assert!(app.confirm_quit_puzzle);
+    assert_eq!(app.audio.common_caption(), None);
+    app.handle_input(&AppInput {
+        left_pressed: true,
+        ..Default::default()
+    });
+    assert!(app.quit_requested);
+}
+
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
+#[test]
+fn in_game_menu_renders_original_tbx_sprites_in_vga_and_ega() {
+    let mut app = GameApp::new(test_game_dir(), false).unwrap();
+    app.selected_puzzle = 1;
+    app.selected_grid_dim = 2;
+    app.start_selected_puzzle();
+
+    let mut renderer = AppRenderer::new();
+    renderer.render_if_needed(&app, 200, 100, false, false);
+    let board_only = renderer.fb.pixels;
+
+    // Idle board pointer motion keeps base cache clean while menu is closed.
+    assert_eq!(
+        app.present_signature(200, 100, false, false),
+        app.present_signature(201, 101, false, false)
+    );
+    assert!(!renderer.render_if_needed(&app, 200, 100, false, false));
+
+    // Open menu in VGA and verify it renders over the board.
+    app.open_in_game_menu();
+    assert!(renderer.render_if_needed(&app, 120, 54, false, false));
+    assert_ne!(renderer.fb.pixels, board_only);
+
+    // Switch to EGA while menu is open -> Setup closes menu cleanly, then re-open in EGA.
+    app.open_setup(true);
+    assert!(!app.in_game_menu_open);
+    app.setup_menu.prefs.video_mode = 2;
+    app.exit_setup(true);
+    app.open_in_game_menu();
+    assert!(renderer.render_if_needed(&app, 120, 54, false, false));
+}

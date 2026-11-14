@@ -184,6 +184,10 @@ impl PuzzleRenderer {
         }
     }
 
+    pub(crate) fn tbx_remap(&self) -> &[u8; 256] {
+        &self.tbx_remap
+    }
+
     fn ensure_board_fb(
         &mut self,
         key: BoardStateKey,
@@ -856,7 +860,7 @@ impl PuzzleRenderer {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_beveled_box(
+pub(crate) fn draw_beveled_box(
     fb: &mut Framebuffer,
     x: i32,
     y: i32,

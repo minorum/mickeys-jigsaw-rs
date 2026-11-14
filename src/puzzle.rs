@@ -1302,6 +1302,51 @@ impl PuzzleSession {
         self.bump_board();
     }
 
+    /// Replays the puzzle's completion sequence (`0x804` in `FUN_1e59_2857`), enabled only when solved.
+    pub fn replay_sequence(&mut self, audio: &mut AudioEngine) -> bool {
+        if !self.solved {
+            return false;
+        }
+        self.pending_completion_feedback = false;
+        audio.stop_all();
+        audio.play_common(CommonSound::SeeWhatHappens);
+        self.start_sequence(self.default_playback(), audio);
+        self.bump_visual();
+        true
+    }
+
+    /// Returns the currently held single piece or connected group to the tray (`0x803` in `FUN_1e59_2857`).
+    pub fn return_held_to_tray(&mut self, audio: &mut AudioEngine) -> bool {
+        if self.return_held_to_tray_at(0, audio) {
+            self.tray_scroll = 0;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn return_held_to_tray_at(&mut self, insert_at: usize, audio: &mut AudioEngine) -> bool {
+        let Some(held) = self.held_piece.take() else {
+            return false;
+        };
+        let insert_at = insert_at.min(self.tray_order.len());
+        if self.held_group.len() > 1 {
+            let group: Vec<usize> = self.held_group.drain(..).map(|(p, _, _)| p).collect();
+            self.held_group_anchor = None;
+            for (offset, gp) in group.into_iter().enumerate() {
+                self.tray_order
+                    .insert((insert_at + offset).min(self.tray_order.len()), gp);
+            }
+        } else {
+            self.held_group.clear();
+            self.held_group_anchor = None;
+            self.tray_order.insert(insert_at, held);
+        }
+        audio.play_common(CommonSound::ReturnPiece);
+        self.bump_tray();
+        true
+    }
+
     pub fn handle_pointer_press(
         &mut self,
         mx: i32,
@@ -1396,23 +1441,9 @@ impl PuzzleSession {
             let slot_h = self.tray_slot_height();
             let slot = (((my - 30) / slot_h.max(1)) as usize).min(vis - 1);
             let tray_pos = self.tray_scroll + slot;
-            if let Some(held) = self.held_piece.take() {
+            if self.held_piece.is_some() {
                 // Return held piece (or connected group) to tray
-                let insert_at = tray_pos.min(self.tray_order.len());
-                if self.held_group.len() > 1 {
-                    let group: Vec<usize> = self.held_group.drain(..).map(|(p, _, _)| p).collect();
-                    self.held_group_anchor = None;
-                    for (offset, gp) in group.into_iter().enumerate() {
-                        self.tray_order
-                            .insert((insert_at + offset).min(self.tray_order.len()), gp);
-                    }
-                } else {
-                    self.held_group.clear();
-                    self.held_group_anchor = None;
-                    self.tray_order.insert(insert_at, held);
-                }
-                audio.play_common(CommonSound::ReturnPiece);
-                self.bump_tray();
+                self.return_held_to_tray_at(tray_pos, audio);
             } else if tray_pos < self.tray_order.len() {
                 let pidx = self.tray_order.remove(tray_pos);
                 self.held_piece = Some(pidx);
