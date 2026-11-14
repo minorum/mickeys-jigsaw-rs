@@ -2054,7 +2054,7 @@ fn toolbox_cache_and_guide_match_uncached_render_across_interactions() {
     ];
 
     for (mx, my, scroll) in steps {
-        session.tray_scroll = scroll;
+        session.scroll_tray(scroll - session.tray_scroll as i32);
         cached_renderer.render(&session, &mut fb_cached, &tbx, &font, mx, my);
         fb_cached.to_rgba8(&mut rgba_cached);
         cached_renderer.blend_picture_guide(&session, &mut rgba_cached, mx, my);
@@ -2073,4 +2073,50 @@ fn toolbox_cache_and_guide_match_uncached_render_across_interactions() {
             "rgba mismatch at ({mx}, {my}, {scroll})"
         );
     }
+}
+
+#[test]
+fn toolbox_cache_invalidates_on_tray_pickup_and_return_without_bumping_board_rev() {
+    let asset = synthetic_puzzle_asset(1, false);
+    let mut session = PuzzleSession::new(1, asset.clone(), 4, true, true, false);
+    let (tbx, font) = synthetic_toolbox_and_font();
+    let mut audio = AudioEngine::new(Path::new("."), false, false);
+
+    let mut cached_renderer = PuzzleRenderer::new();
+    let mut fb_cached = Framebuffer::new();
+    let mut fb_uncached = Framebuffer::new();
+
+    // Hover slot 0 at (20, 40) with tray_scroll = 0, then pick up and return at the same coordinates.
+    let (mx, my) = (20, 40);
+    let initial_board_rev = session.board_rev();
+    let initial_tray_rev = session.tray_rev();
+
+    cached_renderer.render(&session, &mut fb_cached, &tbx, &font, mx, my);
+
+    // Pickup from slot 0: tray_order shrinks, board_rev stays unchanged, tray_rev bumps.
+    session.handle_click(mx, my, &mut audio);
+    assert!(session.held_piece.is_some());
+    assert_eq!(session.board_rev(), initial_board_rev);
+    assert_ne!(session.tray_rev(), initial_tray_rev);
+    let pickup_tray_rev = session.tray_rev();
+
+    cached_renderer.render(&session, &mut fb_cached, &tbx, &font, mx, my);
+    PuzzleRenderer::new().render(&session, &mut fb_uncached, &tbx, &font, mx, my);
+    assert_eq!(
+        fb_cached.pixels, fb_uncached.pixels,
+        "stale toolbox after pickup"
+    );
+
+    // Return to slot 0 at the exact same hover/scroll: board_rev still unchanged, tray_rev bumps.
+    session.handle_click(mx, my, &mut audio);
+    assert!(session.held_piece.is_none());
+    assert_eq!(session.board_rev(), initial_board_rev);
+    assert_ne!(session.tray_rev(), pickup_tray_rev);
+
+    cached_renderer.render(&session, &mut fb_cached, &tbx, &font, mx, my);
+    PuzzleRenderer::new().render(&session, &mut fb_uncached, &tbx, &font, mx, my);
+    assert_eq!(
+        fb_cached.pixels, fb_uncached.pixels,
+        "stale toolbox after return"
+    );
 }

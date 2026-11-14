@@ -49,7 +49,7 @@ struct ToolboxCacheKey {
     session_id: u64,
     asset_rev: u64,
     board_rev: u64,
-    tray_scroll: usize,
+    tray_rev: u64,
     hovered_slot: Option<usize>,
 }
 
@@ -595,7 +595,7 @@ impl PuzzleRenderer {
             session_id: session.session_id(),
             asset_rev: session.asset_rev(),
             board_rev: session.board_rev(),
-            tray_scroll: session.tray_scroll,
+            tray_rev: session.tray_rev(),
             hovered_slot,
         };
         if let Some((cached_key, strip)) = &self.toolbox_strip
