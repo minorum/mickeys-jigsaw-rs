@@ -1,8 +1,8 @@
 # Mickey's Jigsaw Puzzles — Rust recreation
 
 Native desktop recreation using the original game files in this directory.
-Requires Rust and the platform libraries used by Macroquad and Rodio (including
-ALSA development files on Linux). No new dependencies were added during the audit.
+Requires Rust, SDL3 development libraries, and the platform audio libraries
+used by Rodio (including ALSA development files on Linux).
 
 ```sh
 cargo run
@@ -25,6 +25,7 @@ edge-shape and grid-line settings apply to generated grids.
 | Title | Enter, Space, or click to continue |
 | Browser | Left/Right: puzzle; Up/Down: piece count; Tab/E: edge shape; Enter: play/resume; R: restart |
 | Puzzle | Drag a tray piece to its destination, or click to pick/place; return it to the tray |
+| Puzzle (Touch) | Tap/drag pieces; long-press or 2-finger tap: toolbox / pick up connected group; 2-finger drag: scroll tray |
 | Puzzle / completed picture | WASD: move keyboard pointer; Enter: click; mouse press returns to mouse control |
 | Puzzle | Up/Down or wheel: scroll tray; right-click/Space: show or hide tray |
 | Puzzle | F1: hint; F2: solve; F3/G: grid; F5/P: export line art |

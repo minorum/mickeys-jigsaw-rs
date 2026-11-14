@@ -4,7 +4,7 @@ use crate::assets::{
     FontAsset, Preferences, PrintAsset, PuzzleAsset, ToolboxAsset, load_ilbm_container,
 };
 use crate::audio::{AudioEngine, CommonSound, synthesize_iss_song, synthesize_nnv_phrase};
-use crate::graphics::Framebuffer;
+use crate::graphics::{Framebuffer, SCREEN_W};
 use crate::puzzle::{PuzzleAction, PuzzleSession};
 use crate::puzzle_render::PuzzleRenderer;
 use crate::setup::SetupMenu;
@@ -24,12 +24,10 @@ fn play_viewport_preserves_scene_and_input_coordinates() {
         assert!((viewport.w / viewport.h - 1.6).abs() < 0.001);
         let scale = viewport.w / SCREEN_W as f32;
         for (x, y) in [(20.0, 40.0), (115.0, 51.0), (250.0, 149.0)] {
-            let point = vec2(
-                viewport.x + (x + 0.5) * scale,
-                viewport.y + (y + 0.5) * scale,
-            );
-            assert_eq!(((point.x - viewport.x) / scale).floor() as i32, x as i32);
-            assert_eq!(((point.y - viewport.y) / scale).floor() as i32, y as i32);
+            let px = viewport.x + (x + 0.5) * scale;
+            let py = viewport.y + (y + 0.5) * scale;
+            assert_eq!(((px - viewport.x) / scale).floor() as i32, x as i32);
+            assert_eq!(((py - viewport.y) / scale).floor() as i32, y as i32);
         }
     }
 }
@@ -1363,16 +1361,40 @@ fn perf_benchmark() {
     }
     let render_dissolve = t_dissolve.elapsed();
 
+    // Dragging a piece with the new layer-composited pipeline (board, toolbox, held group cached)
+    session.held_piece = Some(0);
+    let mut layer_board = vec![0u8; 320 * 200 * 4];
+    let mut layer_tbx = Vec::new();
+    let mut layer_held = Vec::new();
+    renderer.render_board_layer_rgba(&session, &tbx, true, &mut layer_board);
+    renderer.render_toolbox_layer_rgba(&session, &tbx, &font, 160, 100, &mut layer_tbx);
+    let held_bounds = renderer
+        .render_held_group_layer_rgba(&session, 160, 100, &mut layer_held)
+        .unwrap();
+    let t_drag_layers = Instant::now();
+    for i in 0..iters {
+        let mx = 80 + (i % 160);
+        let my = 40 + (i % 120);
+        let anchor = &session.pieces[0];
+        let ax = mx - anchor.base_w / 2 + held_bounds.0;
+        let ay = my - anchor.base_h / 2 + held_bounds.1;
+        black_box((ax, ay, &layer_board[0], &layer_tbx[0], &layer_held[0]));
+    }
+    let drag_layers = t_drag_layers.elapsed();
+    session.held_piece = None;
+
     eprintln!(
         "load_15_vga={:.2}ms load_15_ega={:.2}ms cut_8x8={:.2}ms cut_preset={:.2}ms \
-         render_warm={:.2}us/frame drag_full={:.2}us/frame to_rgba8={:.2}us/frame \
-         guide={:.2}us/frame render_anim={:.2}us/frame render_dissolve={:.2}us/frame",
+         render_warm={:.2}us/frame drag_full={:.2}us/frame drag_layers={:.3}us/frame \
+         to_rgba8={:.2}us/frame guide={:.2}us/frame render_anim={:.2}us/frame \
+         render_dissolve={:.2}us/frame",
         load_all_vga.as_secs_f64() * 1000.0,
         load_all_ega.as_secs_f64() * 1000.0,
         cut_8x8.as_secs_f64() * 1000.0,
         cut_preset.as_secs_f64() * 1000.0,
         render_warm.as_secs_f64() * 1e6 / iters as f64,
         drag_full.as_secs_f64() * 1e6 / iters as f64,
+        drag_layers.as_secs_f64() * 1e6 / iters as f64,
         to_rgba.as_secs_f64() * 1e6 / iters as f64,
         guide.as_secs_f64() * 1e6 / iters as f64,
         render_anim.as_secs_f64() * 1e6 / anim_iters as f64,
@@ -3100,4 +3122,332 @@ fn in_game_menu_renders_original_tbx_sprites_in_vga_and_ega() {
     app.exit_setup(true);
     app.open_in_game_menu();
     assert!(renderer.render_if_needed(&app, 120, 54, false, false));
+}
+
+fn composite_gpu_layers_sw(
+    app: &GameApp,
+    app_renderer: &mut AppRenderer,
+    mx: i32,
+    my: i32,
+    picture_guide: bool,
+) -> Vec<u8> {
+    use crate::graphics::SCREEN_H;
+
+    let sess = app.session.as_ref().unwrap();
+    let tbx = if sess.asset.uses_ega() {
+        &app.tbx_ega
+    } else {
+        &app.tbx
+    };
+    let (px, py) = sess.active_pointer(mx, my);
+    let mut out = vec![0u8; (SCREEN_W * SCREEN_H * 4) as usize];
+
+    let blit_layer = |dst: &mut [u8], src: &[u8], lx: i32, ly: i32, lw: i32, lh: i32| {
+        for sy in 0..lh {
+            let dy = ly + sy;
+            if !(0..SCREEN_H).contains(&dy) {
+                continue;
+            }
+            for sx in 0..lw {
+                let dx = lx + sx;
+                if !(0..SCREEN_W).contains(&dx) {
+                    continue;
+                }
+                let s = ((sy * lw + sx) * 4) as usize;
+                if src[s + 3] == 0 {
+                    continue;
+                }
+                let d = ((dy * SCREEN_W + dx) * 4) as usize;
+                dst[d..d + 4].copy_from_slice(&src[s..s + 4]);
+            }
+        }
+    };
+
+    app_renderer
+        .puzzle_renderer
+        .render_board_layer_rgba(sess, tbx, picture_guide, &mut out);
+
+    if let Some((_, rem)) = sess.hint_piece {
+        let mut hint_buf = Vec::new();
+        if let Some((hx, hy, hw, hh)) = app_renderer
+            .puzzle_renderer
+            .render_hint_layer_rgba(sess, &mut hint_buf)
+        {
+            let blink = ((rem * 8.0) as i32) & 1 == 0;
+            if !blink {
+                for px in hint_buf.chunks_exact_mut(4) {
+                    if px[3] > 0 {
+                        px[1] = 0;
+                        px[2] = 0;
+                    }
+                }
+            }
+            blit_layer(&mut out, &hint_buf, hx, hy, hw, hh);
+        }
+    }
+
+    let mut tbx_buf = Vec::new();
+    let (tx, ty, tw, th) = app_renderer
+        .puzzle_renderer
+        .render_toolbox_layer_rgba(sess, tbx, &app.font, px, py, &mut tbx_buf);
+    blit_layer(&mut out, &tbx_buf, tx, ty, tw, th);
+
+    if let Some(pidx) = sess.held_piece {
+        let mut held_buf = Vec::new();
+        if let Some((rx, ry, hw, hh)) = app_renderer
+            .puzzle_renderer
+            .render_held_group_layer_rgba(sess, px, py, &mut held_buf)
+        {
+            let anchor = &sess.pieces[pidx];
+            let ax = px - anchor.base_w / 2;
+            let ay = py - anchor.base_h / 2;
+            blit_layer(&mut out, &held_buf, ax + rx, ay + ry, hw, hh);
+        }
+    }
+
+    let mut overlay_buf = vec![0u8; (SCREEN_W * SCREEN_H * 4) as usize];
+    if app_renderer.render_playing_overlay_rgba(app, &mut overlay_buf) {
+        blit_layer(&mut out, &overlay_buf, 0, 0, SCREEN_W, SCREEN_H);
+    }
+
+    if let Some((sprite_idx, cx, cy)) = AppRenderer::desired_cursor(app, mx, my, false) {
+        let mut cur_buf = Vec::new();
+        if let Some((cw, ch)) = AppRenderer::render_cursor_rgba(app, sprite_idx, &mut cur_buf) {
+            blit_layer(&mut out, &cur_buf, cx, cy, cw, ch);
+        }
+    }
+
+    out
+}
+
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
+#[test]
+fn gpu_layer_composition_matches_software_renderer_pixel_for_pixel() {
+    for video_mode in [0u16, 2u16] {
+        let mut app = GameApp::new(test_game_dir(), false).unwrap();
+        app.setup_menu.prefs.video_mode = video_mode;
+        app.exit_setup(false);
+        app.selected_puzzle = 1;
+        app.selected_grid_dim = 4;
+        app.start_selected_puzzle();
+
+        let mut ref_renderer = AppRenderer::new();
+        let mut layer_renderer = AppRenderer::new();
+
+        // 1. Place two adjacent pieces (0 and 1), then pick up the connected group
+        {
+            let col_w = crate::puzzle::grid_col_widths(4);
+            let row_h = crate::puzzle::grid_row_heights(4);
+            let sess = app.session.as_mut().unwrap();
+            for (pidx, r, c) in [(0usize, 0usize, 0usize), (1usize, 0, 1)] {
+                let pos = sess.tray_order.iter().position(|&p| p == pidx).unwrap();
+                sess.tray_scroll = pos;
+                sess.handle_click(20, 40, &mut app.audio);
+                let cx = sess.playfield_x() + col_w[..c].iter().sum::<i32>() + col_w[c] / 2;
+                let cy = sess.playfield_y() + row_h[..r].iter().sum::<i32>() + row_h[r] / 2;
+                sess.handle_click(cx, cy, &mut app.audio);
+            }
+            sess.trigger_hint();
+            sess.status_message = Some(("Connected!".to_string(), 1.5));
+        }
+
+        for guide in [false, true] {
+            for (mx, my) in [(160, 100), (24, 50)] {
+                assert!(ref_renderer.render_if_needed(&app, mx, my, false, guide));
+                let composited = composite_gpu_layers_sw(&app, &mut layer_renderer, mx, my, guide);
+                if composited != ref_renderer.rgba_buf {
+                    let diff_idx = composited
+                        .chunks_exact(4)
+                        .zip(ref_renderer.rgba_buf.chunks_exact(4))
+                        .position(|(a, b)| a != b)
+                        .unwrap();
+                    let dx = (diff_idx as i32) % SCREEN_W;
+                    let dy = (diff_idx as i32) / SCREEN_W;
+                    panic!(
+                        "pixel mismatch at ({dx},{dy}) for video_mode={video_mode}, guide={guide}, pos=({mx},{my}): layer={:?} vs ref={:?}",
+                        &composited[diff_idx * 4..diff_idx * 4 + 4],
+                        &ref_renderer.rgba_buf[diff_idx * 4..diff_idx * 4 + 4]
+                    );
+                }
+            }
+        }
+
+        // 2. Pick up connected group and drag it over both the board and toolbox
+        {
+            let sess = app.session.as_mut().unwrap();
+            let pfx = sess.playfield_x();
+            let pfy = sess.playfield_y();
+            let tx = pfx + sess.pieces[0].base_x + sess.pieces[0].base_w / 2;
+            let ty = pfy + sess.pieces[0].base_y + sess.pieces[0].base_h / 2;
+            let mut audio = AudioEngine::new(&test_game_dir(), false, false);
+            assert!(sess.handle_right_click(tx, ty, &mut audio));
+        }
+        for guide in [false, true] {
+            for (mx, my) in [(150, 95), (38, 80)] {
+                ref_renderer.render_if_needed(&app, mx, my, false, guide);
+                let composited = composite_gpu_layers_sw(&app, &mut layer_renderer, mx, my, guide);
+                if composited != ref_renderer.rgba_buf {
+                    let diff_idx = composited
+                        .chunks_exact(4)
+                        .zip(ref_renderer.rgba_buf.chunks_exact(4))
+                        .position(|(a, b)| a != b)
+                        .unwrap();
+                    let dx = (diff_idx as i32) % SCREEN_W;
+                    let dy = (diff_idx as i32) / SCREEN_W;
+                    panic!(
+                        "held-group mismatch at ({dx},{dy}) for video_mode={video_mode}, guide={guide}, pos=({mx},{my}): layer={:?} vs ref={:?}",
+                        &composited[diff_idx * 4..diff_idx * 4 + 4],
+                        &ref_renderer.rgba_buf[diff_idx * 4..diff_idx * 4 + 4]
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
+#[test]
+fn touch_input_drives_puzzle_drag_placement_tray_and_menus() {
+    use crate::input::{InputRouter, PlatformEvent, ViewportTransform};
+
+    let mut app = GameApp::new(test_game_dir(), false).unwrap();
+    app.selected_puzzle = 1;
+    app.selected_grid_dim = 2;
+    app.start_selected_puzzle();
+
+    let tf = ViewportTransform::new(960.0, 720.0, 1.5, true);
+    let mut router = InputRouter::new();
+    let dos_to_logical = |dx: i32, dy: i32| -> (f32, f32) {
+        (
+            tf.viewport.x + (dx as f32 + 0.5) * tf.scale,
+            tf.viewport.y + (dy as f32 + 0.5) * tf.scale,
+        )
+    };
+
+    // 1. Touch tap on tray slot 0 picks up piece, drag to target places it
+    let tray_pidx = app.session.as_ref().unwrap().tray_order[0];
+    let (tx, ty) = dos_to_logical(23, 44);
+    router.push_event(PlatformEvent::TouchDown {
+        finger_id: 1,
+        x: tx,
+        y: ty,
+    });
+    let f1 = router.finish_frame(0.016, &tf, true, true);
+    app.handle_input(&f1.app_input);
+    assert_eq!(app.session.as_ref().unwrap().held_piece, Some(tray_pidx));
+
+    let (dest_x, dest_y) = {
+        let sess = app.session.as_ref().unwrap();
+        let p = &sess.pieces[tray_pidx];
+        dos_to_logical(
+            sess.playfield_x() + p.base_x + p.base_w / 2,
+            sess.playfield_y() + p.base_y + p.base_h / 2,
+        )
+    };
+    router.push_event(PlatformEvent::TouchMove {
+        finger_id: 1,
+        x: dest_x,
+        y: dest_y,
+    });
+    router.push_event(PlatformEvent::TouchUp {
+        finger_id: 1,
+        x: dest_x,
+        y: dest_y,
+    });
+    let f2 = router.finish_frame(0.016, &tf, true, true);
+    app.handle_input(&f2.app_input);
+    assert_eq!(app.session.as_ref().unwrap().held_piece, None);
+    assert!(app.session.as_ref().unwrap().pieces[tray_pidx].placed);
+    assert!(app.session.as_ref().unwrap().toolbox_open, "after step 1");
+
+    // 2. Two-finger vertical drag on empty board area scrolls tray
+    let initial_scroll = app.session.as_ref().unwrap().tray_scroll;
+    let empty_x = dest_x + 400.0;
+    router.push_event(PlatformEvent::TouchDown {
+        finger_id: 2,
+        x: empty_x,
+        y: dest_y,
+    });
+    router.push_event(PlatformEvent::TouchDown {
+        finger_id: 3,
+        x: empty_x + 40.0,
+        y: dest_y,
+    });
+    router.push_event(PlatformEvent::TouchMove {
+        finger_id: 3,
+        x: empty_x + 40.0,
+        y: dest_y - 30.0,
+    });
+    let f_scroll = router.finish_frame(0.016, &tf, true, true);
+    app.handle_input(&f_scroll.app_input);
+    assert_eq!(app.session.as_ref().unwrap().tray_scroll, initial_scroll + 1);
+    router.push_event(PlatformEvent::TouchUp {
+        finger_id: 2,
+        x: empty_x,
+        y: dest_y,
+    });
+    router.push_event(PlatformEvent::TouchUp {
+        finger_id: 3,
+        x: empty_x + 40.0,
+        y: dest_y - 30.0,
+    });
+    let _ = router.finish_frame(0.016, &tf, true, true);
+
+    // 3. Long-press on placed piece picks it up as connected group (right-click alternative)
+    router.push_event(PlatformEvent::TouchDown {
+        finger_id: 4,
+        x: dest_x,
+        y: dest_y,
+    });
+    let _ = router.finish_frame(0.1, &tf, true, true);
+    let f_lp = router.finish_frame(0.4, &tf, true, true);
+    app.handle_input(&f_lp.app_input);
+    assert_eq!(app.session.as_ref().unwrap().held_piece, Some(tray_pidx));
+    assert!(!app.session.as_ref().unwrap().pieces[tray_pidx].placed);
+    router.push_event(PlatformEvent::TouchUp {
+        finger_id: 4,
+        x: dest_x,
+        y: dest_y,
+    });
+    let f_lp_up = router.finish_frame(0.016, &tf, true, true);
+    app.handle_input(&f_lp_up.app_input);
+    // Piece remains held after long-press lift so user can tap destination or tray to return
+    assert_eq!(app.session.as_ref().unwrap().held_piece, Some(tray_pidx));
+
+    // 4. Tap tray slot returns held piece to tray
+    router.push_event(PlatformEvent::TouchDown {
+        finger_id: 5,
+        x: tx,
+        y: ty,
+    });
+    router.push_event(PlatformEvent::TouchUp {
+        finger_id: 5,
+        x: tx,
+        y: ty,
+    });
+    let f_ret = router.finish_frame(0.016, &tf, true, true);
+    app.handle_input(&f_ret.app_input);
+    assert_eq!(app.session.as_ref().unwrap().held_piece, None);
+
+    // 5. Tap MENU button opens modal menu
+    let (mx, my) = dos_to_logical(22, 9);
+    router.push_event(PlatformEvent::TouchDown {
+        finger_id: 6,
+        x: mx,
+        y: my,
+    });
+    router.push_event(PlatformEvent::TouchUp {
+        finger_id: 6,
+        x: mx,
+        y: my,
+    });
+    let f_menu = router.finish_frame(0.016, &tf, true, true);
+    app.handle_input(&f_menu.app_input);
+    assert!(app.in_game_menu_open);
 }

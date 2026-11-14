@@ -9,5 +9,5 @@ description = "Native Rust recreation of Mickey's Jigsaw Puzzles (1991, DOS)"
 asset-tests = []
 
 [dependencies]
-macroquad = { version = "0.4", default-features = false }
+sdl3 = "0.22.1"
 rodio = { version = "0.19", default-features = false, features = ["wav"] }

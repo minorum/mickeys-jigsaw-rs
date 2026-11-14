@@ -1564,6 +1564,21 @@ impl PuzzleSession {
 
     /// Returns `(piece_idx, cell_dx, cell_dy)` for each piece in the currently held group relative to `held_piece`,
     /// using the destination anchor cell under `(pointer_x, pointer_y)` when valid on the grid.
+    pub fn held_group_anchor_cell(
+        &self,
+        pointer_x: i32,
+        pointer_y: i32,
+    ) -> Option<(usize, usize)> {
+        if self.held_group.len() <= 1 || self.grid_dim <= 1 {
+            return None;
+        }
+        self.grid_cell_at(
+            pointer_x - self.playfield_x(),
+            pointer_y - self.playfield_y(),
+        )
+        .or(self.held_group_anchor)
+    }
+
     pub fn held_group_offsets_at(&self, pointer_x: i32, pointer_y: i32) -> Vec<(usize, i32, i32)> {
         let Some(anchor_idx) = self.held_piece else {
             return Vec::new();
