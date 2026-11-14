@@ -3187,16 +3187,22 @@ fn composite_gpu_layers_sw(
     }
 
     let mut tbx_buf = Vec::new();
-    let (tx, ty, tw, th) = app_renderer
-        .puzzle_renderer
-        .render_toolbox_layer_rgba(sess, tbx, &app.font, px, py, &mut tbx_buf);
+    let (tx, ty, tw, th) = app_renderer.puzzle_renderer.render_toolbox_layer_rgba(
+        sess,
+        tbx,
+        &app.font,
+        px,
+        py,
+        &mut tbx_buf,
+    );
     blit_layer(&mut out, &tbx_buf, tx, ty, tw, th);
 
     if let Some(pidx) = sess.held_piece {
         let mut held_buf = Vec::new();
-        if let Some((rx, ry, hw, hh)) = app_renderer
-            .puzzle_renderer
-            .render_held_group_layer_rgba(sess, px, py, &mut held_buf)
+        if let Some((rx, ry, hw, hh)) =
+            app_renderer
+                .puzzle_renderer
+                .render_held_group_layer_rgba(sess, px, py, &mut held_buf)
         {
             let anchor = &sess.pieces[pidx];
             let ax = px - anchor.base_w / 2;
@@ -3330,7 +3336,7 @@ fn touch_input_drives_puzzle_drag_placement_tray_and_menus() {
         )
     };
 
-    // 1. Touch tap on tray slot 0 picks up piece, drag to target places it
+    // 1. Touch drag on tray slot 0 picks up piece, drag to target places it
     let tray_pidx = app.session.as_ref().unwrap().tray_order[0];
     let (tx, ty) = dos_to_logical(23, 44);
     router.push_event(PlatformEvent::TouchDown {
@@ -3340,6 +3346,15 @@ fn touch_input_drives_puzzle_drag_placement_tray_and_menus() {
     });
     let f1 = router.finish_frame(0.016, &tf, true, true);
     app.handle_input(&f1.app_input);
+    assert_eq!(app.session.as_ref().unwrap().held_piece, None);
+
+    router.push_event(PlatformEvent::TouchMove {
+        finger_id: 1,
+        x: tx + 12.0,
+        y: ty,
+    });
+    let f1b = router.finish_frame(0.016, &tf, true, true);
+    app.handle_input(&f1b.app_input);
     assert_eq!(app.session.as_ref().unwrap().held_piece, Some(tray_pidx));
 
     let (dest_x, dest_y) = {
@@ -3386,7 +3401,10 @@ fn touch_input_drives_puzzle_drag_placement_tray_and_menus() {
     });
     let f_scroll = router.finish_frame(0.016, &tf, true, true);
     app.handle_input(&f_scroll.app_input);
-    assert_eq!(app.session.as_ref().unwrap().tray_scroll, initial_scroll + 1);
+    assert_eq!(
+        app.session.as_ref().unwrap().tray_scroll,
+        initial_scroll + 1
+    );
     router.push_event(PlatformEvent::TouchUp {
         finger_id: 2,
         x: empty_x,
@@ -3405,7 +3423,9 @@ fn touch_input_drives_puzzle_drag_placement_tray_and_menus() {
         x: dest_x,
         y: dest_y,
     });
-    let _ = router.finish_frame(0.1, &tf, true, true);
+    let f_lp_down = router.finish_frame(0.1, &tf, true, true);
+    app.handle_input(&f_lp_down.app_input);
+    assert_eq!(app.session.as_ref().unwrap().held_piece, None);
     let f_lp = router.finish_frame(0.4, &tf, true, true);
     app.handle_input(&f_lp.app_input);
     assert_eq!(app.session.as_ref().unwrap().held_piece, Some(tray_pidx));
@@ -3433,6 +3453,8 @@ fn touch_input_drives_puzzle_drag_placement_tray_and_menus() {
     });
     let f_ret = router.finish_frame(0.016, &tf, true, true);
     app.handle_input(&f_ret.app_input);
+    let f_ret_rel = router.finish_frame(0.016, &tf, true, true);
+    app.handle_input(&f_ret_rel.app_input);
     assert_eq!(app.session.as_ref().unwrap().held_piece, None);
 
     // 5. Tap MENU button opens modal menu
@@ -3449,5 +3471,7 @@ fn touch_input_drives_puzzle_drag_placement_tray_and_menus() {
     });
     let f_menu = router.finish_frame(0.016, &tf, true, true);
     app.handle_input(&f_menu.app_input);
+    let f_menu_rel = router.finish_frame(0.016, &tf, true, true);
+    app.handle_input(&f_menu_rel.app_input);
     assert!(app.in_game_menu_open);
 }

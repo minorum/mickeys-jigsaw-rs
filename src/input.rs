@@ -195,7 +195,9 @@ struct PrimaryTouch {
     y: f32,
     held_secs: f32,
     moved_beyond_slop: bool,
+    left_committed: bool,
     long_press_fired: bool,
+    suppressed: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -238,6 +240,7 @@ pub struct InputRouter {
     hud_ref_pointer_down: bool,
     primary_touch: Option<PrimaryTouch>,
     secondary_touch: Option<SecondaryTouch>,
+    deferred_left_release: Option<(f32, f32)>,
     held_keys: HeldKeys,
     pending_events: Vec<PlatformEvent>,
 }
@@ -258,6 +261,7 @@ impl InputRouter {
             hud_ref_pointer_down: false,
             primary_touch: None,
             secondary_touch: None,
+            deferred_left_release: None,
             held_keys: HeldKeys::default(),
             pending_events: Vec::with_capacity(16),
         }
@@ -289,6 +293,7 @@ impl InputRouter {
     fn cancel_touch_contacts(&mut self) {
         self.primary_touch = None;
         self.secondary_touch = None;
+        self.deferred_left_release = None;
         self.hud_ref_pointer_down = false;
     }
 
@@ -307,6 +312,12 @@ impl InputRouter {
         let mut toggle_picture_guide = false;
         let mut wheel_accum = 0.0f32;
         let mut prev_logical = self.pointer_logical;
+        let mut override_dos_logical: Option<(f32, f32)> = None;
+
+        if let Some((rx, ry)) = self.deferred_left_release.take() {
+            input.left_released = true;
+            override_dos_logical = Some((rx, ry));
+        }
 
         let events = std::mem::take(&mut self.pending_events);
         for ev in events {
@@ -401,18 +412,20 @@ impl InputRouter {
                             y,
                             held_secs: 0.0,
                             moved_beyond_slop: false,
+                            left_committed: false,
                             long_press_fired: false,
+                            suppressed: false,
                         });
                         if reference_available && transform.point_in_reference_button(x, y, playing)
                         {
                             self.hud_ref_pointer_down = true;
-                        } else {
-                            let (_, _, inside) = transform.logical_to_dos(x, y);
-                            if inside {
-                                input.left_pressed = true;
-                            }
                         }
                     } else if self.secondary_touch.is_none() {
+                        if let Some(ref mut p) = self.primary_touch
+                            && !p.left_committed
+                        {
+                            p.suppressed = true;
+                        }
                         self.secondary_touch = Some(SecondaryTouch {
                             finger_id,
                             start_x: x,
@@ -435,6 +448,19 @@ impl InputRouter {
                         let dist_sq = (x - p.start_x).powi(2) + (y - p.start_y).powi(2);
                         if dist_sq > TOUCH_TAP_SLOP_PX * TOUCH_TAP_SLOP_PX {
                             p.moved_beyond_slop = true;
+                            if !p.left_committed
+                                && !p.long_press_fired
+                                && !p.suppressed
+                                && !self.hud_ref_pointer_down
+                                && self.secondary_touch.is_none()
+                            {
+                                let (_, _, inside) = transform.logical_to_dos(p.start_x, p.start_y);
+                                if inside {
+                                    p.left_committed = true;
+                                    input.left_pressed = true;
+                                    override_dos_logical = Some((p.start_x, p.start_y));
+                                }
+                            }
                         }
                     } else if let Some(ref mut s) = self.secondary_touch
                         && s.finger_id == finger_id
@@ -466,8 +492,15 @@ impl InputRouter {
                         self.primary_touch = None;
                         if self.hud_ref_pointer_down {
                             self.hud_ref_pointer_down = false;
-                        } else if !p.long_press_fired {
+                        } else if p.left_committed {
                             input.left_released = true;
+                        } else if !p.long_press_fired && !p.suppressed {
+                            let (_, _, inside) = transform.logical_to_dos(p.start_x, p.start_y);
+                            if inside {
+                                input.left_pressed = true;
+                                override_dos_logical = Some((p.start_x, p.start_y));
+                                self.deferred_left_release = Some((x, y));
+                            }
                         }
                     } else if let Some(s) = self.secondary_touch
                         && s.finger_id == finger_id
@@ -477,6 +510,7 @@ impl InputRouter {
                             && !s.moved_beyond_slop
                             && s.held_secs <= TOUCH_TWO_FINGER_TAP_MAX_SECS
                             && !self.hud_ref_pointer_down
+                            && !self.primary_touch.is_some_and(|p| p.left_committed)
                         {
                             let (_, _, inside) = transform
                                 .logical_to_dos(self.pointer_logical.0, self.pointer_logical.1);
@@ -487,10 +521,7 @@ impl InputRouter {
                     }
                 }
                 PlatformEvent::TouchCancel { finger_id } => {
-                    if self
-                        .primary_touch
-                        .is_some_and(|p| p.finger_id == finger_id)
-                    {
+                    if self.primary_touch.is_some_and(|p| p.finger_id == finger_id) {
                         self.primary_touch = None;
                         self.hud_ref_pointer_down = false;
                         input.pointer_canceled = true;
@@ -558,6 +589,8 @@ impl InputRouter {
             if playing
                 && self.secondary_touch.is_none()
                 && !self.hud_ref_pointer_down
+                && !p.left_committed
+                && !p.suppressed
                 && !p.moved_beyond_slop
                 && !p.long_press_fired
                 && p.held_secs >= TOUCH_LONG_PRESS_SECS
@@ -582,8 +615,8 @@ impl InputRouter {
         input.move_x = i32::from(self.held_keys.d) - i32::from(self.held_keys.a);
         input.move_y = i32::from(self.held_keys.s) - i32::from(self.held_keys.w);
 
-        let (dos_x, dos_y, inside) =
-            transform.logical_to_dos(self.pointer_logical.0, self.pointer_logical.1);
+        let dos_logical = override_dos_logical.unwrap_or(self.pointer_logical);
+        let (dos_x, dos_y, inside) = transform.logical_to_dos(dos_logical.0, dos_logical.1);
         input.pointer_x = dos_x;
         input.pointer_y = dos_y;
         input.pointer_moved = inside
@@ -667,8 +700,20 @@ mod tests {
 
         let frame = router.finish_frame(0.016, &tf, true, true);
         assert_eq!(frame.active_device, InputDeviceKind::Touch);
-        assert!(frame.app_input.left_pressed);
+        assert!(!frame.app_input.left_pressed);
         assert!(!frame.app_input.left_released);
+
+        router.push_event(PlatformEvent::TouchUp {
+            finger_id: 1,
+            x: cx,
+            y: cy,
+        });
+        let frame_tap = router.finish_frame(0.016, &tf, true, true);
+        assert!(frame_tap.app_input.left_pressed);
+        assert!(!frame_tap.app_input.left_released);
+
+        let frame_rel = router.finish_frame(0.016, &tf, true, true);
+        assert!(frame_rel.app_input.left_released);
     }
 
     #[test]
@@ -695,15 +740,50 @@ mod tests {
             y: y0 + 210.0,
         });
         let f1 = router.finish_frame(0.016, &tf, true, true);
-        assert!(f1.app_input.left_pressed);
+        assert!(!f1.app_input.left_pressed);
         let (exp_x, exp_y, _) = tf.logical_to_dos(x0, y0);
-        assert_eq!((f1.app_input.pointer_x, f1.app_input.pointer_y), (exp_x, exp_y));
+        assert_eq!(
+            (f1.app_input.pointer_x, f1.app_input.pointer_y),
+            (exp_x, exp_y)
+        );
 
-        // Cancel primary finger
+        // Cancel primary finger and lift secondary finger
         router.push_event(PlatformEvent::TouchCancel { finger_id: 10 });
+        router.push_event(PlatformEvent::TouchUp {
+            finger_id: 20,
+            x: x0 + 210.0,
+            y: y0 + 210.0,
+        });
         let f2 = router.finish_frame(0.016, &tf, true, true);
         assert!(f2.app_input.pointer_canceled);
         assert!(!f2.app_input.left_released);
+
+        // Single-finger drag beyond slop commits left_pressed at start position
+        router.push_event(PlatformEvent::TouchDown {
+            finger_id: 11,
+            x: x0,
+            y: y0,
+        });
+        let f_down = router.finish_frame(0.016, &tf, true, true);
+        assert!(!f_down.app_input.left_pressed);
+        router.push_event(PlatformEvent::TouchMove {
+            finger_id: 11,
+            x: x0 + 12.0,
+            y: y0,
+        });
+        let f_drag = router.finish_frame(0.016, &tf, true, true);
+        assert!(f_drag.app_input.left_pressed);
+        assert_eq!(
+            (f_drag.app_input.pointer_x, f_drag.app_input.pointer_y),
+            (exp_x, exp_y)
+        );
+        router.push_event(PlatformEvent::TouchUp {
+            finger_id: 11,
+            x: x0 + 12.0,
+            y: y0,
+        });
+        let f_up = router.finish_frame(0.016, &tf, true, true);
+        assert!(f_up.app_input.left_released);
     }
 
     #[test]
@@ -713,13 +793,14 @@ mod tests {
         let x0 = tf.viewport.x + tf.viewport.w * 0.5;
         let y0 = tf.viewport.y + tf.viewport.h * 0.5;
 
-        // Long press triggers right_pressed and suppresses left_released on lift
+        // Long press triggers right_pressed without prior left_pressed and suppresses left_released on lift
         router.push_event(PlatformEvent::TouchDown {
             finger_id: 1,
             x: x0,
             y: y0,
         });
-        let _ = router.finish_frame(0.1, &tf, true, true);
+        let f_down = router.finish_frame(0.1, &tf, true, true);
+        assert!(!f_down.app_input.left_pressed);
         let f_lp = router.finish_frame(0.4, &tf, true, true);
         assert!(f_lp.app_input.right_pressed);
         router.push_event(PlatformEvent::TouchUp {
@@ -728,6 +809,7 @@ mod tests {
             y: y0,
         });
         let f_up = router.finish_frame(0.016, &tf, true, true);
+        assert!(!f_up.app_input.left_pressed);
         assert!(!f_up.app_input.left_released);
 
         // Two-finger vertical drag scrolls tray

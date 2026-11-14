@@ -1581,7 +1581,9 @@ impl AppRenderer {
             None => return false,
         };
         let status = sess.status_message();
-        let caption = (app.prefs.text_msg_on != 0).then(|| app.audio.common_caption()).flatten();
+        let caption = (app.prefs.text_msg_on != 0)
+            .then(|| app.audio.common_caption())
+            .flatten();
         let has_error = app.error.is_some();
         if status.is_none() && caption.is_none() && !has_error {
             return false;
@@ -1599,8 +1601,14 @@ impl AppRenderer {
         self.scratch_fb.clear(sentinel);
 
         if let Some(status) = status {
-            self.scratch_fb
-                .draw_text_shadowed(&app.font, status, sess.playfield_x() + 6, 186, black, yellow);
+            self.scratch_fb.draw_text_shadowed(
+                &app.font,
+                status,
+                sess.playfield_x() + 6,
+                186,
+                black,
+                yellow,
+            );
         }
         if let Some(caption) = caption {
             let line_count = caption.split('\r').count() as i32;

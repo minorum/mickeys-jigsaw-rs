@@ -76,6 +76,7 @@ struct SdlGameRenderer<'a> {
     ref_tex: Texture<'a>,
     cached_ref_key: Option<(u64, u64)>,
     board_tex_key: Option<BoardTexKey>,
+    last_rendered_interactive: bool,
     toolbox_layer: Option<(ToolboxTexKey, CachedLayer<'a>)>,
     held_layer: Option<(HeldTexKey, CachedLayer<'a>)>,
     hint_layer: Option<(HintTexKey, CachedLayer<'a>)>,
@@ -88,23 +89,30 @@ struct SdlGameRenderer<'a> {
 
 impl<'a> SdlGameRenderer<'a> {
     fn new(creator: &'a TextureCreator<WindowContext>, app: &GameApp) -> SdlResult<Self> {
-        let mut base_tex = creator
-            .create_texture_streaming(PixelFormat::RGBA32, SCREEN_W as u32, SCREEN_H as u32)?;
+        let mut base_tex = creator.create_texture_streaming(
+            PixelFormat::RGBA32,
+            SCREEN_W as u32,
+            SCREEN_H as u32,
+        )?;
         base_tex.set_scale_mode(ScaleMode::Nearest);
         base_tex.set_blend_mode(BlendMode::None);
 
-        let mut ref_tex = creator
-            .create_texture_streaming(PixelFormat::RGBA32, SCREEN_W as u32, SCREEN_H as u32)?;
+        let mut ref_tex = creator.create_texture_streaming(
+            PixelFormat::RGBA32,
+            SCREEN_W as u32,
+            SCREEN_H as u32,
+        )?;
         ref_tex.set_scale_mode(ScaleMode::Nearest);
         ref_tex.set_blend_mode(BlendMode::None);
 
         let mut scratch_rgba = Vec::new();
         let mut cursor_texs = [None, None, None];
         for (slot, sprite_idx) in [62usize, 63, 64].into_iter().enumerate() {
-            if let Some((w, h)) = AppRenderer::render_cursor_rgba(app, sprite_idx, &mut scratch_rgba)
+            if let Some((w, h)) =
+                AppRenderer::render_cursor_rgba(app, sprite_idx, &mut scratch_rgba)
             {
-                let mut tex = creator
-                    .create_texture_static(PixelFormat::RGBA32, w as u32, h as u32)?;
+                let mut tex =
+                    creator.create_texture_static(PixelFormat::RGBA32, w as u32, h as u32)?;
                 tex.set_scale_mode(ScaleMode::Nearest);
                 tex.set_blend_mode(BlendMode::Blend);
                 tex.update(None, &scratch_rgba, (w * 4) as usize)?;
@@ -119,6 +127,7 @@ impl<'a> SdlGameRenderer<'a> {
             ref_tex,
             cached_ref_key: None,
             board_tex_key: None,
+            last_rendered_interactive: false,
             toolbox_layer: None,
             held_layer: None,
             hint_layer: None,
@@ -168,8 +177,18 @@ impl<'a> SdlGameRenderer<'a> {
         active_device: InputDeviceKind,
     ) -> SdlResult<()> {
         canvas.set_scale(
-            (canvas.output_size().map(|(w, _)| w as f32).unwrap_or(tf.win_w) / tf.win_w).max(0.5),
-            (canvas.output_size().map(|(_, h)| h as f32).unwrap_or(tf.win_h) / tf.win_h).max(0.5),
+            (canvas
+                .output_size()
+                .map(|(w, _)| w as f32)
+                .unwrap_or(tf.win_w)
+                / tf.win_w)
+                .max(0.5),
+            (canvas
+                .output_size()
+                .map(|(_, h)| h as f32)
+                .unwrap_or(tf.win_h)
+                / tf.win_h)
+                .max(0.5),
         )?;
 
         canvas.set_draw_color(Color::RGB(0x26, 0x36, 0x40));
@@ -194,11 +213,15 @@ impl<'a> SdlGameRenderer<'a> {
                 my,
                 picture_guide,
             )?;
+            self.last_rendered_interactive = true;
         } else {
-            if app_renderer.render_base_only(app, mx, my, show_reference, picture_guide) {
+            let uploaded =
+                app_renderer.render_base_only(app, mx, my, show_reference, picture_guide);
+            if uploaded || self.last_rendered_interactive {
                 self.base_tex
                     .update(None, app_renderer.base_rgba(), (SCREEN_W * 4) as usize)?;
             }
+            self.last_rendered_interactive = false;
             // Invalidate board_tex_key so returning from menu/reference re-syncs cleanly
             self.board_tex_key = None;
             let dst = FRect::new(tf.viewport.x, tf.viewport.y, tf.viewport.w, tf.viewport.h);
@@ -291,10 +314,7 @@ impl<'a> SdlGameRenderer<'a> {
                 asset_rev: sess.asset_rev(),
                 hint_idx: hidx,
             };
-            let rebuild = self
-                .hint_layer
-                .as_ref()
-                .is_none_or(|(k, _)| *k != hint_key);
+            let rebuild = self.hint_layer.as_ref().is_none_or(|(k, _)| *k != hint_key);
             if rebuild {
                 if let Some((hx, hy, hw, hh)) = app_renderer
                     .puzzle_renderer
@@ -416,13 +436,8 @@ impl<'a> SdlGameRenderer<'a> {
                 let anchor = &sess.pieces[pidx];
                 let ax = px - anchor.base_w / 2;
                 let ay = py - anchor.base_h / 2;
-                let dst = Self::dos_rect_to_viewport(
-                    tf,
-                    ax + layer.x,
-                    ay + layer.y,
-                    layer.w,
-                    layer.h,
-                );
+                let dst =
+                    Self::dos_rect_to_viewport(tf, ax + layer.x, ay + layer.y, layer.w, layer.h);
                 canvas.copy(&layer.tex, None, Some(dst))?;
             }
         } else {
@@ -516,11 +531,23 @@ impl<'a> SdlGameRenderer<'a> {
         } else {
             "Mickey's Jigsaw Puzzles"
         };
-        draw_scaled_text(canvas, title, 112.0, 14.0, if compact { 1.75 } else { 2.0 }, ink)?;
+        draw_scaled_text(
+            canvas,
+            title,
+            112.0,
+            14.0,
+            if compact { 1.75 } else { 2.0 },
+            ink,
+        )?;
 
         let placed = session.placed_count();
         let status = if compact {
-            format!("{:02} / {} of {}", session.puzzle_num, placed, session.pieces.len())
+            format!(
+                "{:02} / {} of {}",
+                session.puzzle_num,
+                placed,
+                session.pieces.len()
+            )
         } else {
             format!(
                 "Picture {:02}  /  {} of {} pieces placed",
@@ -757,7 +784,10 @@ pub fn run(mut app: GameApp) -> Result<(), String> {
 
     'main: loop {
         let now = Instant::now();
-        let dt = now.duration_since(last_frame).as_secs_f32().clamp(0.0, 0.25);
+        let dt = now
+            .duration_since(last_frame)
+            .as_secs_f32()
+            .clamp(0.0, 0.25);
         last_frame = now;
 
         let (win_w_u, win_h_u) = canvas.window().size();

@@ -802,8 +802,8 @@ impl PuzzleRenderer {
                 if !(0..h).contains(&dy) {
                     continue;
                 }
-                let src_row = (spr.sub_y as usize + sy as usize) * spr.stride as usize
-                    + spr.sub_x as usize;
+                let src_row =
+                    (spr.sub_y as usize + sy as usize) * spr.stride as usize + spr.sub_x as usize;
                 let dst_row = (dy as usize) * (w as usize) * 4;
                 for sx in 0..sw {
                     let dx = rx + sx;
