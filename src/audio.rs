@@ -19,7 +19,7 @@ pub const NNV_SAMPLE_RATE: u32 = 9322;
 /// Output sample rate used for synthesized music & mixed audio.
 pub const AUDIO_SAMPLE_RATE: u32 = 22050;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
 pub enum CommonSound {
     Cancel = 0,
@@ -1035,8 +1035,13 @@ mod tests {
     )]
     #[test]
     fn scene_wait_does_not_overlap_busy_audio_or_trap_a_loop() {
+        use bevy_ecs::system::RunSystemOnce;
+        use bevy_state::prelude::{NextState, StateTransition};
+        use crate::app::{AppInput, AppScreen, build_game_app, step_app};
         use crate::assets::{FrameCommand, PuzzleAsset, SceneRecord};
-        use crate::puzzle::PuzzleSession;
+        use crate::ecs::components::AnimationState;
+        use crate::ecs::resources::{ActivePuzzle, AudioStatus};
+        use crate::ecs::systems::browser::spawn_puzzle_session;
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut asset = PuzzleAsset::load(dir, 2, false).unwrap();
         let sound = asset
@@ -1044,41 +1049,147 @@ mod tests {
             .iter()
             .position(|entry| entry.tag == "ROBOT")
             .unwrap();
-        let frame = asset.records.iter().position(|record| matches!(record,
-            SceneRecord::Frame { commands, .. } if commands.iter().any(|command|
-                matches!(command, FrameCommand::Sound { snd_idx: Some(index) } if *index == sound))
-        )).unwrap();
+        let frame = asset
+            .records
+            .iter()
+            .position(|record| {
+                matches!(
+                    record,
+                    SceneRecord::Frame { commands, .. }
+                        if commands
+                            .iter()
+                            .any(|command| matches!(command, FrameCommand::Sound { snd_idx: Some(index) } if *index == sound))
+                )
+            })
+            .unwrap();
         asset.sequences[2].start_frame = frame;
         asset.sequences[2].end_frame = frame + 2;
-        let mut session = PuzzleSession::new(2, asset, 2, false, false, false);
+
+        let mut app = build_game_app(dir.to_path_buf(), false).unwrap();
         let mut audio = AudioEngine::new(dir, false, false);
         audio.sfx_enabled = true;
-        session.on_puzzle_completed(&mut audio);
+        app.world_mut().insert_non_send(audio);
+        let mut asset_slot = Some(asset);
+        app.world_mut()
+            .run_system_once(
+                move |mut commands: bevy_ecs::prelude::Commands,
+                      mut active_puzzle: bevy_ecs::prelude::ResMut<
+                    crate::ecs::resources::ActivePuzzle,
+                >,
+                      piece_q: bevy_ecs::prelude::Query<
+                    bevy_ecs::prelude::Entity,
+                    bevy_ecs::prelude::With<crate::ecs::components::PieceIdentity>,
+                >,
+                      hotspot_q: bevy_ecs::prelude::Query<
+                    bevy_ecs::prelude::Entity,
+                    bevy_ecs::prelude::With<crate::ecs::components::SceneHotspot>,
+                >,
+                      anim_q: bevy_ecs::prelude::Query<
+                    bevy_ecs::prelude::Entity,
+                    bevy_ecs::prelude::With<AnimationState>,
+                >| {
+                    let asset = asset_slot.take().unwrap();
+                    spawn_puzzle_session(
+                        &mut commands,
+                        &mut active_puzzle,
+                        &piece_q,
+                        &hotspot_q,
+                        &anim_q,
+                        2,
+                        asset,
+                        2,
+                        false,
+                        false,
+                        false,
+                        false,
+                    );
+                },
+            )
+            .unwrap();
+        app.world_mut()
+            .resource_mut::<NextState<AppScreen>>()
+            .set(AppScreen::Playing);
+        let _ = app.world_mut().try_run_schedule(StateTransition);
+        app.world_mut()
+            .run_system_once(
+                |mut commands: bevy_ecs::prelude::Commands,
+                 mut active_puzzle: bevy_ecs::prelude::ResMut<ActivePuzzle>,
+                 audio_status: bevy_ecs::prelude::Res<AudioStatus>,
+                 mut audio_out: bevy_ecs::prelude::MessageWriter<
+                    crate::ecs::events::AudioCommand,
+                >| {
+                    crate::ecs::puzzle_ops::complete_puzzle(
+                        active_puzzle.0.as_mut().unwrap(),
+                        &audio_status,
+                        &mut commands,
+                        &[],
+                        &[],
+                        &mut audio_out,
+                    );
+                },
+            )
+            .unwrap();
+        step_app(&mut app, &AppInput::default());
         let (sink, _queue) = Sink::new_idle();
-        sink.append(SamplesBuffer::new(
-            1,
-            NNV_SAMPLE_RATE,
-            synthesize_nnv_phrase(&audio.nnv_banks["P02"], 2),
-        ));
-        audio.sfx_sinks.push(sink);
-        session.active_anim.as_mut().unwrap().wait_for_audio = true;
-        session.update(10.0, &mut audio);
-        assert_eq!(session.active_anim.as_ref().unwrap().cur_frame, frame);
-        assert_eq!(audio.sfx_sinks.len(), 1);
-        audio.stop_all();
-        session.update(0.0, &mut audio);
-        assert_eq!(session.active_anim.as_ref().unwrap().cur_frame, frame + 1);
-        assert!(
-            session
-                .active_anim
-                .as_ref()
+        let samples = {
+            let audio = app.world().non_send::<AudioEngine>();
+            synthesize_nnv_phrase(&audio.nnv_banks["P02"], 2)
+        };
+        sink.append(SamplesBuffer::new(1, NNV_SAMPLE_RATE, samples));
+        app.world_mut()
+            .non_send_mut::<AudioEngine>()
+            .sfx_sinks
+            .push(sink);
+        {
+            let world = app.world_mut();
+            world
+                .query::<&mut AnimationState>()
+                .iter_mut(world)
+                .next()
                 .unwrap()
-                .looping_sound
-                .is_some()
+                .wait_for_audio = true;
+        }
+        step_app(
+            &mut app,
+            &AppInput {
+                dt: 10.0,
+                ..Default::default()
+            },
         );
-        session.update(10.0, &mut audio);
-        assert!(session.active_anim.is_none());
-        assert!(!audio.is_playing());
+        {
+            let w = app.world_mut();
+            let anim = w.query::<&AnimationState>().iter(w).next().unwrap();
+            assert_eq!(anim.cur_frame, frame);
+        }
+        assert_eq!(app.world().non_send::<AudioEngine>().sfx_sinks.len(), 1);
+        app.world_mut()
+            .non_send_mut::<AudioEngine>()
+            .stop_all();
+        step_app(
+            &mut app,
+            &AppInput {
+                dt: 0.0,
+                ..Default::default()
+            },
+        );
+        {
+            let w = app.world_mut();
+            let anim = w.query::<&AnimationState>().iter(w).next().unwrap();
+            assert_eq!(anim.cur_frame, frame + 1);
+            assert!(anim.looping_sound.is_some());
+        }
+        step_app(
+            &mut app,
+            &AppInput {
+                dt: 10.0,
+                ..Default::default()
+            },
+        );
+        {
+            let w = app.world_mut();
+            assert!(w.query::<&AnimationState>().iter(w).next().is_none());
+        }
+        assert!(!app.world().non_send::<AudioEngine>().is_playing());
     }
 
     #[cfg_attr(
