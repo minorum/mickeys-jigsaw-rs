@@ -873,6 +873,17 @@ mod tests {
         assert!(audio.music_sink.is_none());
     }
 
+    #[test]
+    fn update_ignores_non_finite_dt() {
+        let mut engine = AudioEngine::new(Path::new("."), false, false);
+        engine.play_common(CommonSound::ChoosePiece);
+        assert!(engine.common_caption().is_some());
+        for dt in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            engine.update(dt);
+            assert!(engine.common_caption().is_some(), "dt={dt}");
+        }
+    }
+
     #[cfg_attr(
         not(feature = "asset-tests"),
         ignore = "requires original DOS game assets"

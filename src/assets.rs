@@ -52,14 +52,13 @@ fn read_tagged_chunk<'a>(
         .ok_or_else(|| err.to_string())?;
     let header = buf.get(*pos..header_end).ok_or_else(|| err.to_string())?;
     let tag = &header[0..4];
-    let size = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
+    let size = le_u32(header, 4) as usize;
     let end = header_end
         .checked_add(size)
         .filter(|&end| end <= buf.len())
         .ok_or_else(|| err.to_string())?;
-    let chunk = buf.get(header_end..end).ok_or_else(|| err.to_string())?;
     *pos = end;
-    Ok((tag, chunk))
+    Ok((tag, &buf[header_end..end]))
 }
 
 /// Proportional 1-bit font loaded from `MJP.NFT` (`616 x 10` strip, ASCII `32..127`).
@@ -107,7 +106,7 @@ impl FontAsset {
         }
 
         let mut pos = 405usize;
-        let mut bitmap = Vec::new();
+        let mut bitmap = Vec::with_capacity(usize::from(height) * stride_bytes);
         for _ in 0..height {
             let row_len = usize::from(*data.get(pos).ok_or("Truncated font row")?);
             let row_end = pos + row_len;
@@ -495,33 +494,33 @@ impl SpeechBubble {
                 Ok(u16::from_le_bytes([pair[0], pair[1]]))
             };
             let count = word(rest, 0)? as usize;
-            let header = 2 + count * 4;
             if count == 0 {
                 bubbles.push(None);
                 rest = &rest[2..];
                 continue;
             }
+            let header = 2 + count * 4;
             let text_x = word(rest, header + 8)? as i16 as i32;
             let text_y = word(rest, header + 10)? as i16 as i32;
             let length = word(rest, header + 12)? as usize;
+            let end = header + 14 + length;
             let text = rest
-                .get(header + 14..header + 14 + length)
+                .get(header + 14..end)
                 .ok_or("Truncated speech bubble text")?
                 .to_vec();
-            let mut points = Vec::with_capacity(count);
-            for index in 0..count {
-                points.push((
-                    word(rest, 2 + index * 4)? as i16 as i32,
-                    word(rest, 4 + index * 4)? as i16 as i32,
-                ));
-            }
+            let points = rest[2..header]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| (le_i16(c, 0) as i32, le_i16(c, 2) as i32))
+                .collect();
             bubbles.push(Some(SpeechBubble {
                 points,
                 text_x,
                 text_y,
                 text,
             }));
-            rest = &rest[header + 14 + length..];
+            rest = &rest[end..];
         }
         Ok(bubbles)
     }
@@ -631,6 +630,25 @@ impl PuzzleAsset {
         Ok((palette, chunk))
     }
 
+    fn next_sub_command<'a>(
+        rec: &'a [u8],
+        sp: &mut usize,
+        kind: &str,
+    ) -> Result<(u16, &'a [u8]), String> {
+        if *sp + 4 > rec.len() {
+            return Err(format!("Truncated {kind} command table"));
+        }
+        let ctype = le_u16(rec, *sp);
+        let csz = le_u16(rec, *sp + 2) as usize;
+        let end = sp
+            .checked_add(csz)
+            .filter(|&end| csz >= 4 && end <= rec.len())
+            .ok_or_else(|| format!("Invalid {kind} command size"))?;
+        let sub = &rec[*sp..end];
+        *sp = end;
+        Ok((ctype, sub))
+    }
+
     fn parse_sequence_header(
         rec: &[u8],
         full_anim_seq_idx: &mut usize,
@@ -642,42 +660,34 @@ impl PuzzleAsset {
         let mut default_playback = None;
         let mut sp = 16usize;
         for _ in 0..sub_cnt {
-            if sp + 4 > rec.len() {
-                return Err("Truncated sequence command table".to_string());
-            }
-            let ctype = le_u16(rec, sp);
-            let csz = le_u16(rec, sp + 2) as usize;
-            if csz < 4 || sp + csz > rec.len() {
-                return Err("Invalid sequence command size".to_string());
-            }
-            if (ctype == 0x0010 && csz < 12) || (ctype == 0x0011 && csz < 22) {
+            let (ctype, sub) = Self::next_sub_command(rec, &mut sp, "sequence")?;
+            if (ctype == 0x0010 && sub.len() < 12) || (ctype == 0x0011 && sub.len() < 22) {
                 return Err(format!("Truncated sequence command {ctype:#06x}"));
             }
             if ctype == 0x0010 {
-                let sidx = le_u16(rec, sp + 4) as usize;
+                let sidx = le_u16(sub, 4) as usize;
                 default_playback = Some(SequencePlayback {
                     seq_idx: sidx,
-                    repetitions: le_u16(rec, sp + 6),
-                    frame_delay_ticks: le_u16(rec, sp + 8),
+                    repetitions: le_u16(sub, 6),
+                    frame_delay_ticks: le_u16(sub, 8),
                 });
                 *full_anim_seq_idx = sidx;
             } else if ctype == 0x0011 {
-                let sidx = le_u16(rec, sp + 4) as usize;
+                let sidx = le_u16(sub, 4) as usize;
                 let hs = Hotspot {
                     playback: SequencePlayback {
                         seq_idx: sidx,
-                        repetitions: le_u16(rec, sp + 6),
-                        frame_delay_ticks: le_u16(rec, sp + 8),
+                        repetitions: le_u16(sub, 6),
+                        frame_delay_ticks: le_u16(sub, 8),
                     },
-                    x: le_i16(rec, sp + 14),
-                    y: le_i16(rec, sp + 16),
-                    width: le_i16(rec, sp + 18),
-                    height: le_i16(rec, sp + 20),
+                    x: le_i16(sub, 14),
+                    y: le_i16(sub, 16),
+                    width: le_i16(sub, 18),
+                    height: le_i16(sub, 20),
                 };
                 hotspots.push(hs.clone());
                 all_hotspots.push(hs);
             }
-            sp += csz;
         }
         if sp != rec.len() {
             return Err("Invalid sequence command count".to_string());
@@ -699,17 +709,9 @@ impl PuzzleAsset {
         let mut commands = Vec::with_capacity(sub_cnt);
         let mut sp = 12usize;
         for _ in 0..sub_cnt {
-            if sp + 4 > rec.len() {
-                return Err("Truncated frame command table".to_string());
-            }
-            let ctype = le_u16(rec, sp);
-            let csz = le_u16(rec, sp + 2) as usize;
-            if csz < 4 || sp + csz > rec.len() {
-                return Err("Invalid frame command size".to_string());
-            }
-            let sub = &rec[sp..sp + csz];
+            let (ctype, sub) = Self::next_sub_command(rec, &mut sp, "frame")?;
             let need = |min: usize| {
-                (csz >= min)
+                (sub.len() >= min)
                     .then_some(sub)
                     .ok_or_else(|| format!("Truncated frame command {ctype:#06x}"))
             };
@@ -783,7 +785,6 @@ impl PuzzleAsset {
                 }
                 _ => {}
             }
-            sp += csz;
         }
         if sp != rec.len() {
             return Err("Invalid frame command count".to_string());
@@ -859,10 +860,11 @@ impl PuzzleAsset {
                     return Err("Truncated scene resource header".to_string());
                 }
                 let rsz = le_u32(chunk, rpos + 2) as usize;
-                if rsz < 6 || rpos + rsz > chunk.len() {
-                    return Err(format!("Invalid scene resource size at {rpos:#x}"));
-                }
-                let rec = &chunk[rpos..rpos + rsz];
+                let end = rpos
+                    .checked_add(rsz)
+                    .filter(|&end| rsz >= 6 && end <= chunk.len())
+                    .ok_or_else(|| format!("Invalid scene resource size at {rpos:#x}"))?;
+                let rec = &chunk[rpos..end];
                 if rtype == 0x8023 {
                     if rec.len() < 28 {
                         return Err("Truncated scene sound header".to_string());
@@ -871,7 +873,7 @@ impl PuzzleAsset {
                 } else if rtype == 0x8061 {
                     sprites.push(Sprite8061::from_record(rec)?);
                 }
-                rpos += rsz;
+                rpos = end;
             }
         }
         if rpos != chunk.len() {
@@ -879,16 +881,14 @@ impl PuzzleAsset {
         }
 
         let mut sequences = Vec::with_capacity(seq_headers.len());
-        for i in 0..seq_headers.len() {
-            let (ref name, hdr_idx) = seq_headers[i];
-            let next_hdr = seq_headers
-                .get(i + 1)
-                .map_or(records.len(), |&(_, idx)| idx);
+        let mut hdr_iter = seq_headers.into_iter().peekable();
+        while let Some((name, hdr_idx)) = hdr_iter.next() {
+            let end_frame = hdr_iter.peek().map_or(records.len(), |&(_, idx)| idx);
             sequences.push(NamedSequence {
-                name: name.clone(),
+                name,
                 header_idx: hdr_idx,
                 start_frame: hdr_idx + 1,
-                end_frame: next_hdr,
+                end_frame,
             });
         }
 
@@ -991,7 +991,7 @@ impl Preferences {
         if b.len() < 28 {
             return Err("MJP.PRE shorter than 28 bytes".to_string());
         }
-        let u = |i: usize| u16::from_le_bytes([b[i * 2], b[i * 2 + 1]]);
+        let u = |i: usize| le_u16(&b, i * 2);
         Ok(Self {
             video_mode: u(0),
             control_mode: u(1),
@@ -1027,9 +1027,9 @@ impl Preferences {
             self.printer_class as u16,
             self.printer_port,
         ];
-        let mut bytes = Vec::with_capacity(28);
-        for w in words {
-            bytes.extend_from_slice(&w.to_le_bytes());
+        let mut bytes = [0u8; 28];
+        for (dst, w) in bytes.as_chunks_mut::<2>().0.iter_mut().zip(words) {
+            *dst = w.to_le_bytes();
         }
         fs::write(path, bytes).map_err(|e| format!("Failed to write {:?}: {}", path, e))
     }
@@ -1616,5 +1616,30 @@ mod tests {
         assert_eq!(spr2.pixels, vec![1, 2, 3, 3, 1, 0]);
         rec2.pop();
         assert!(Sprite8061::from_record(&rec2).is_err());
+    }
+
+    #[test]
+    fn scene_resource_rejects_u32_max_size_without_overflow() {
+        let mut container = b"MCG0".to_vec();
+        container.extend_from_slice(&6u32.to_le_bytes());
+        container.extend_from_slice(&0x8061u16.to_le_bytes());
+        container.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert!(PuzzleAsset::from_decompressed(1, &container).is_err());
+    }
+
+    #[test]
+    fn preferences_roundtrip_and_rejects_short_file() {
+        let tmp = std::env::temp_dir().join("mjp_test_prefs_roundtrip.pre");
+        let prefs = Preferences {
+            video_mode: 2,
+            control_mode: 0,
+            printer_class: -1,
+            ..Preferences::default()
+        };
+        prefs.save(&tmp).unwrap();
+        assert_eq!(Preferences::load(&tmp).unwrap(), prefs);
+        fs::write(&tmp, [0u8; 27]).unwrap();
+        assert!(Preferences::load(&tmp).is_err());
+        let _ = fs::remove_file(&tmp);
     }
 }
