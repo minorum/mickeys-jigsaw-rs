@@ -1861,3 +1861,69 @@ fn replace_scene_asset_clears_hint_when_piece_count_changes() {
     assert_eq!(session.pieces.len(), 1);
     assert_eq!(session.hint_piece, None);
 }
+
+#[test]
+fn hidden_tray_ignores_scroll() {
+    let asset = synthetic_puzzle_asset(1, false);
+    let mut session = PuzzleSession::new(1, asset, 3, true, false, false);
+    let mut audio = AudioEngine::new(Path::new("."), false, false);
+
+    session.scroll_tray(1);
+    assert_eq!(session.tray_scroll, 1);
+    session.toggle_toolbox();
+    assert!(!session.toolbox_open);
+
+    // Scrolling while toolbox is hidden must not mutate tray_scroll.
+    session.scroll_tray(-1);
+    assert_eq!(session.tray_scroll, 1);
+
+    // Solving also hides the tray and ignores scroll.
+    session.toggle_toolbox();
+    session.auto_solve(&mut audio);
+    assert!(session.solved);
+    session.scroll_tray(1);
+    assert_eq!(session.tray_scroll, 0);
+}
+
+#[test]
+fn replace_scene_asset_reopens_toolbox_when_solved_piece_count_changes() {
+    let mut asset_two = synthetic_puzzle_asset(1, false);
+    asset_two.records.push(SceneRecord::Frame {
+        bg_color: 0,
+        bg_frame_idx: 0,
+        commands: vec![
+            FrameCommand::SubFrame {
+                dx: 0,
+                dy: 0,
+                frame_idx: 2,
+                flags: 0,
+            },
+            FrameCommand::SubFrame {
+                dx: 10,
+                dy: 10,
+                frame_idx: 3,
+                flags: 0,
+            },
+        ],
+    });
+    let mut asset_one = synthetic_puzzle_asset(1, true);
+    asset_one.records.push(SceneRecord::Frame {
+        bg_color: 0,
+        bg_frame_idx: 0,
+        commands: vec![FrameCommand::SubFrame {
+            dx: 0,
+            dy: 0,
+            frame_idx: 2,
+            flags: 0,
+        }],
+    });
+    let mut session = PuzzleSession::new(1, asset_two, 0, true, false, false);
+    let mut audio = AudioEngine::new(Path::new("."), false, false);
+    session.auto_solve(&mut audio);
+    assert!(session.solved);
+    assert!(!session.toolbox_open);
+
+    session.replace_scene_asset(asset_one);
+    assert!(!session.solved);
+    assert!(session.toolbox_open);
+}

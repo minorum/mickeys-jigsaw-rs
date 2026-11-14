@@ -131,7 +131,7 @@ impl PuzzleRenderer {
         self.board_fb = None;
     }
 
-    fn ensure_placed_mask(&mut self, key: BoardStateKey, pieces: &[JigsawPiece]) -> &[bool] {
+    fn ensure_placed_mask(&mut self, key: BoardStateKey, pieces: &[JigsawPiece]) {
         let rebuild = self
             .placed_mask
             .as_ref()
@@ -169,7 +169,6 @@ impl PuzzleRenderer {
             }
             self.placed_mask = Some((key, placed_cov));
         }
-        &self.placed_mask.as_ref().unwrap().1
     }
 
     fn ensure_board_fb(
@@ -340,7 +339,7 @@ impl PuzzleRenderer {
                 pointer_y - piece.base_h / 2 + piece.target_y - piece.base_y - pfy,
             )
         });
-        let _ = self.ensure_placed_mask(mask_key, &session.pieces);
+        self.ensure_placed_mask(mask_key, &session.pieces);
         let placed_cov = &self.placed_mask.as_ref().unwrap().1;
 
         for y in 0..PLAYFIELD_H {

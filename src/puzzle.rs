@@ -212,7 +212,6 @@ enum PointerVisualState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PuzzlePresentKey {
     session_id: u64,
-    puzzle_num: usize,
     asset_rev: u64,
     visual_rev: u64,
     picture_guide: bool,
@@ -410,6 +409,7 @@ impl PuzzleSession {
             self.solved = old_solved;
         } else {
             self.hint_piece = None;
+            self.toolbox_open = true;
         }
         self.active_anim = None;
         self.drag_origin = None;
@@ -782,6 +782,9 @@ impl PuzzleSession {
     }
 
     pub fn scroll_tray(&mut self, delta: i32) {
+        if !self.toolbox_open || self.solved {
+            return;
+        }
         let prev = self.tray_scroll;
         if delta < 0 {
             self.tray_scroll = self
@@ -817,9 +820,7 @@ impl PuzzleSession {
             p.placed = true;
         }
         self.tray_order.clear();
-        self.held_piece = None;
-        self.hint_piece = None;
-        self.drag_origin = None;
+        self.tray_scroll = 0;
         self.on_puzzle_completed(audio);
     }
 
@@ -857,15 +858,19 @@ impl PuzzleSession {
     pub fn start_sequence(&mut self, playback: SequencePlayback, audio: &mut AudioEngine) {
         let seq_idx = playback.seq_idx;
         let default_delay_secs = f32::from(playback.frame_delay_ticks) * DOS_TICK_SECS;
-        if let Some(seq) = self.asset.sequences.get(seq_idx)
-            && seq.start_frame < seq.end_frame
+        if let Some((start_frame, end_frame)) = self
+            .asset
+            .sequences
+            .get(seq_idx)
+            .filter(|seq| seq.start_frame < seq.end_frame)
+            .map(|seq| (seq.start_frame, seq.end_frame))
         {
-            self.active_anim = Some(AnimationPlayer {
+            let mut anim = AnimationPlayer {
                 seq_idx,
-                start_frame: seq.start_frame,
+                start_frame,
                 previous_frame: self.asset.static_frame_idx(),
-                cur_frame: seq.start_frame,
-                end_frame: seq.end_frame,
+                cur_frame: start_frame,
+                end_frame,
                 tick_accum: 0.0,
                 frame_delay_secs: default_delay_secs,
                 repetitions_left: playback.repetitions.max(1),
@@ -874,23 +879,49 @@ impl PuzzleSession {
                 bubble: None,
                 wait_for_audio: false,
                 looping_sound: None,
-            });
-            self.trigger_frame_side_effects(seq.start_frame, audio);
+            };
+            Self::apply_frame_side_effects(
+                &mut self.asset,
+                &mut self.voice_rng,
+                self.text_enabled,
+                &mut anim,
+                start_frame,
+                audio,
+            );
+            self.active_anim = Some(anim);
             self.bump_visual();
         }
     }
 
+    #[cfg(test)]
     fn trigger_frame_side_effects(&mut self, frame_idx: usize, audio: &mut AudioEngine) {
-        let Some(mut anim) = self.active_anim.take() else {
-            return;
-        };
+        if let Some(anim) = &mut self.active_anim {
+            Self::apply_frame_side_effects(
+                &mut self.asset,
+                &mut self.voice_rng,
+                self.text_enabled,
+                anim,
+                frame_idx,
+                audio,
+            );
+        }
+    }
+
+    fn apply_frame_side_effects(
+        asset: &mut PuzzleAsset,
+        voice_rng: &mut LcgRng,
+        text_enabled: bool,
+        anim: &mut AnimationPlayer,
+        frame_idx: usize,
+        audio: &mut AudioEngine,
+    ) {
         let mut delay_ticks = None;
         let mut sound_to_play = None;
         anim.wait_for_audio = false;
         anim.frame_delay_secs = anim.default_delay_secs;
         anim.transition_mode = 0;
 
-        if let Some(SceneRecord::Frame { commands, .. }) = self.asset.records.get(frame_idx) {
+        if let Some(SceneRecord::Frame { commands, .. }) = asset.records.get(frame_idx) {
             for cmd in commands {
                 match *cmd {
                     FrameCommand::Delay { ticks, raw } => {
@@ -916,7 +947,7 @@ impl PuzzleSession {
             audio.stop_all();
             anim.bubble = None;
             anim.looping_sound = None;
-            if let Some(entry) = self.asset.sounds.get_mut(sidx) {
+            if let Some(entry) = asset.sounds.get_mut(sidx) {
                 let mut voice_chosen = false;
                 let looping = entry.selection_mode & 0x80 != 0;
                 let has_music = entry
@@ -925,7 +956,7 @@ impl PuzzleSession {
                     .is_some_and(|desc| audio.iss_songs.keys().any(|(stem, _)| stem == &desc.stem));
                 if (audio.sfx_enabled || !audio.music_enabled || !has_music)
                     && entry.sounds.len() > 1
-                    && let Some(voice) = entry.select_voice(|| (self.voice_rng.next() & 1) != 0)
+                    && let Some(voice) = entry.select_voice(|| (voice_rng.next() & 1) != 0)
                 {
                     let desc = &entry.sounds[voice + 1];
                     if audio.nnv_banks.contains_key(&desc.stem) {
@@ -934,7 +965,7 @@ impl PuzzleSession {
                         if looping {
                             anim.looping_sound = Some((sidx, voice + 1));
                         }
-                        if self.text_enabled {
+                        if text_enabled {
                             anim.bubble = Some((sidx, voice));
                         }
                     }
@@ -951,11 +982,9 @@ impl PuzzleSession {
                 }
             }
         }
-        if anim.wait_for_audio && anim.bubble.is_some() && self.text_enabled && !audio.is_playing()
-        {
+        if anim.wait_for_audio && anim.bubble.is_some() && text_enabled && !audio.is_playing() {
             anim.frame_delay_secs = 20.0 * DOS_TICK_SECS;
         }
-        self.active_anim = Some(anim);
     }
 
     #[inline]
@@ -970,22 +999,19 @@ impl PuzzleSession {
             self.elapsed_secs += dt as f64;
         }
         let prev_hint = self.hint_blink_phase();
-        if let Some((pidx, mut rem)) = self.hint_piece {
-            rem -= dt;
-            if rem <= 0.0 {
+        if let Some((_, rem)) = &mut self.hint_piece {
+            *rem -= dt;
+            if *rem <= 0.0 {
                 self.hint_piece = None;
-            } else {
-                self.hint_piece = Some((pidx, rem));
             }
         }
         if self.hint_blink_phase() != prev_hint {
             self.bump_visual();
         }
-        if let Some((msg, mut rem)) = self.status_message.take() {
-            rem -= dt;
-            if rem > 0.0 {
-                self.status_message = Some((msg, rem));
-            } else {
+        if let Some((_, rem)) = &mut self.status_message {
+            *rem -= dt;
+            if *rem <= 0.0 {
+                self.status_message = None;
                 self.bump_visual();
             }
         }
@@ -993,49 +1019,55 @@ impl PuzzleSession {
             .active_anim
             .as_ref()
             .map(|a| (a.cur_frame, a.bubble.filter(|_| self.text_enabled)));
-        if let Some(anim) = self.active_anim.as_mut() {
+        if let Some(mut anim) = self.active_anim.take() {
             anim.tick_accum += dt;
-        }
-        while let Some(mut anim) = self.active_anim.take() {
-            if anim.tick_accum < anim.frame_delay_secs {
-                self.active_anim = Some(anim);
-                break;
-            }
-            if anim.wait_for_audio && audio.is_playing() {
-                anim.tick_accum = anim.frame_delay_secs;
-                self.active_anim = Some(anim);
-                break;
-            }
-            anim.tick_accum -= anim.frame_delay_secs;
-            if anim.wait_for_audio {
-                anim.bubble = None;
-            }
-            anim.previous_frame = anim.cur_frame;
-            if anim.cur_frame + 1 >= anim.end_frame {
-                if anim.repetitions_left <= 1 {
-                    if anim.looping_sound.is_some() {
-                        audio.stop_all();
-                    }
+            loop {
+                if anim.tick_accum < anim.frame_delay_secs {
+                    self.active_anim = Some(anim);
                     break;
                 }
-                anim.repetitions_left -= 1;
-                anim.cur_frame = anim.start_frame;
-            } else {
-                anim.cur_frame += 1;
-            }
-            if !audio.is_playing()
-                && let Some((sound, descriptor)) = anim.looping_sound
-            {
-                let desc = &self.asset.sounds[sound].sounds[descriptor];
-                if descriptor == 0 {
-                    audio.play_iss(&desc.stem, desc.phrase_idx as usize);
-                } else {
-                    audio.play_nnv(&desc.stem, desc.phrase_idx as usize);
+                if anim.wait_for_audio && audio.is_playing() {
+                    anim.tick_accum = anim.frame_delay_secs;
+                    self.active_anim = Some(anim);
+                    break;
                 }
+                anim.tick_accum -= anim.frame_delay_secs;
+                if anim.wait_for_audio {
+                    anim.bubble = None;
+                }
+                anim.previous_frame = anim.cur_frame;
+                if anim.cur_frame + 1 >= anim.end_frame {
+                    if anim.repetitions_left <= 1 {
+                        if anim.looping_sound.is_some() {
+                            audio.stop_all();
+                        }
+                        break;
+                    }
+                    anim.repetitions_left -= 1;
+                    anim.cur_frame = anim.start_frame;
+                } else {
+                    anim.cur_frame += 1;
+                }
+                if !audio.is_playing()
+                    && let Some((sound, descriptor)) = anim.looping_sound
+                {
+                    let desc = &self.asset.sounds[sound].sounds[descriptor];
+                    if descriptor == 0 {
+                        audio.play_iss(&desc.stem, desc.phrase_idx as usize);
+                    } else {
+                        audio.play_nnv(&desc.stem, desc.phrase_idx as usize);
+                    }
+                }
+                let frame = anim.cur_frame;
+                Self::apply_frame_side_effects(
+                    &mut self.asset,
+                    &mut self.voice_rng,
+                    self.text_enabled,
+                    &mut anim,
+                    frame,
+                    audio,
+                );
             }
-            let frame = anim.cur_frame;
-            self.active_anim = Some(anim);
-            self.trigger_frame_side_effects(frame, audio);
         }
         let next_anim_vis = self
             .active_anim
@@ -1335,7 +1367,6 @@ impl PuzzleSession {
         };
         PuzzlePresentKey {
             session_id: self.session_id,
-            puzzle_num: self.puzzle_num,
             asset_rev: self.asset_rev,
             visual_rev: self.visual_rev,
             picture_guide: !self.solved && self.active_anim.is_none() && picture_guide,
