@@ -685,8 +685,9 @@ impl AudioEngine {
     }
 
     pub fn update(&mut self, dt: f32) {
+        let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
         if let Some((_, remaining, _)) = self.common_caption.as_mut() {
-            *remaining -= dt.max(0.0);
+            *remaining -= dt;
             if *remaining <= 0.0 {
                 self.common_caption = None;
             }

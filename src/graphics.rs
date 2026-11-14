@@ -322,6 +322,9 @@ impl Framebuffer {
     }
 
     pub fn blit_thumbnail(&mut self, spr: &Sprite8061, x: i32, y: i32, w: i32, h: i32) {
+        if w <= 0 || h <= 0 || spr.width == 0 || spr.sub_h == 0 {
+            return;
+        }
         let scale = (w as f32 / spr.width as f32)
             .min(h as f32 / spr.sub_h as f32)
             .min(1.0);
@@ -439,10 +442,7 @@ impl Framebuffer {
             pts,
             ox,
             oy,
-            self.clip_x,
-            self.clip_y,
-            self.clip_w,
-            self.clip_h,
+            [self.clip_x, self.clip_y, self.clip_w, self.clip_h],
             &mut nodes,
             |y, x0, x1| {
                 let row = (y * SCREEN_W) as usize;
@@ -507,16 +507,13 @@ impl Framebuffer {
 
 /// Scanline polygon rasterizer using the `VGA.BIN` half-open Y rule `(yi < y && yj >= y)`.
 ///
-/// Calls `fill_span(y, x0, x1)` with inclusive clipped bounds `x0 <= x1` for each scanline.
-#[expect(clippy::too_many_arguments)]
+/// `clip` is `[clip_x, clip_y, clip_w, clip_h]`. Calls `fill_span(y, x0, x1)` with
+/// inclusive clipped bounds `x0 <= x1` for each scanline.
 pub(crate) fn rasterize_polygon(
     pts: &[(i32, i32)],
     ox: i32,
     oy: i32,
-    clip_x: i32,
-    clip_y: i32,
-    clip_w: i32,
-    clip_h: i32,
+    [clip_x, clip_y, clip_w, clip_h]: [i32; 4],
     nodes: &mut Vec<i32>,
     mut fill_span: impl FnMut(i32, i32, i32),
 ) {

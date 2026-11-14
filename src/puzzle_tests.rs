@@ -1663,3 +1663,158 @@ fn curved_cut_pieces_match_framebuffer_rasterization_without_assets() {
         }
     }
 }
+
+#[test]
+fn solved_sequence_at_indexes_hotspots_by_subframe_order() {
+    use crate::assets::{Hotspot, NamedSequence};
+
+    let mut palette = [[0u8; 3]; 256];
+    palette[7] = [204, 204, 187];
+    let default_playback = SequencePlayback {
+        seq_idx: 1,
+        repetitions: 1,
+        frame_delay_ticks: 2,
+    };
+    let hs0 = Hotspot {
+        playback: SequencePlayback {
+            seq_idx: 2,
+            repetitions: 1,
+            frame_delay_ticks: 4,
+        },
+        x: 10,
+        y: 10,
+        width: 20,
+        height: 20,
+    };
+    let hs1 = Hotspot {
+        playback: SequencePlayback {
+            seq_idx: 3,
+            repetitions: 2,
+            frame_delay_ticks: 6,
+        },
+        x: 60,
+        y: 10,
+        width: 20,
+        height: 20,
+    };
+    let asset = PuzzleAsset {
+        id: 1,
+        palette,
+        records: vec![
+            SceneRecord::SequenceHeader {
+                name: "INIT".to_string(),
+                default_playback: None,
+                hotspots: Vec::new(),
+            },
+            SceneRecord::SequenceHeader {
+                name: "FILM".to_string(),
+                default_playback: Some(default_playback),
+                hotspots: vec![hs0.clone(), hs1.clone()],
+            },
+            // FILM start frame with non-SubFrame commands preceding SubFrames
+            SceneRecord::Frame {
+                bg_frame_idx: 0,
+                bg_color: 0,
+                commands: vec![
+                    FrameCommand::Delay { raw: 0, ticks: 0 },
+                    FrameCommand::Sound { snd_idx: None },
+                    FrameCommand::SubFrame {
+                        dx: 0,
+                        dy: 0,
+                        frame_idx: 3,
+                        flags: 0,
+                    },
+                    FrameCommand::SubFrame {
+                        dx: 0,
+                        dy: 0,
+                        frame_idx: 4,
+                        flags: 0,
+                    },
+                ],
+            },
+            SceneRecord::Frame {
+                bg_frame_idx: 0,
+                bg_color: 0,
+                commands: vec![],
+            },
+            SceneRecord::Frame {
+                bg_frame_idx: 0,
+                bg_color: 0,
+                commands: vec![],
+            },
+        ],
+        sequences: vec![
+            NamedSequence {
+                name: "INIT".to_string(),
+                header_idx: 0,
+                start_frame: 1,
+                end_frame: 1,
+            },
+            NamedSequence {
+                name: "FILM".to_string(),
+                header_idx: 1,
+                start_frame: 2,
+                end_frame: 5,
+            },
+        ],
+        hotspots: vec![hs0.clone(), hs1.clone()],
+        full_anim_seq_idx: 1,
+        sounds: Vec::new(),
+        sprites: Vec::new(),
+    };
+    let session = PuzzleSession::new(1, asset, 2, false, false, false);
+    assert_eq!(session.solved_sequence_at(20, 20), hs0.playback);
+    assert_eq!(session.solved_sequence_at(70, 20), hs1.playback);
+}
+
+#[test]
+fn blend_picture_guide_skips_active_animation() {
+    let mut palette = [[0u8; 3]; 256];
+    palette[7] = [204, 204, 187];
+    let asset = PuzzleAsset {
+        id: 1,
+        palette,
+        records: vec![SceneRecord::Frame {
+            bg_frame_idx: 0,
+            bg_color: 1,
+            commands: vec![],
+        }],
+        sequences: Vec::new(),
+        hotspots: Vec::new(),
+        full_anim_seq_idx: 0,
+        sounds: Vec::new(),
+        sprites: Vec::new(),
+    };
+    let mut session = PuzzleSession::new(1, asset, 2, false, false, false);
+    session.active_anim = Some(AnimationPlayer {
+        seq_idx: 0,
+        start_frame: 0,
+        previous_frame: 0,
+        cur_frame: 0,
+        end_frame: 1,
+        tick_accum: 0.0,
+        frame_delay_secs: 0.1,
+        repetitions_left: 1,
+        default_delay_secs: 0.1,
+        transition_mode: 0,
+        bubble: None,
+        wait_for_audio: false,
+        looping_sound: None,
+    });
+    let mut renderer = PuzzleRenderer::new();
+    let mut rgba = [204u8, 204, 187, 255].repeat(320 * 200);
+    let expected = rgba.clone();
+    renderer.blend_picture_guide(&session, &mut rgba, 160, 100);
+    assert_eq!(rgba, expected);
+}
+
+#[test]
+fn blit_thumbnail_ignores_zero_dimensions() {
+    let mut fb = Framebuffer::new();
+    let spr = Sprite8061::from_8bpp(0, 0, 0, Vec::new(), Vec::new());
+    fb.blit_thumbnail(&spr, 10, 10, 20, 20);
+    let non_zero = Sprite8061::from_8bpp(4, 4, 0, vec![5; 16], vec![true; 16]);
+    fb.blit_thumbnail(&non_zero, 10, 10, 0, 20);
+    fb.blit_thumbnail(&non_zero, 10, 10, 20, 0);
+    assert!(fb.pixels.iter().all(|&p| p == 0));
+}

@@ -77,8 +77,8 @@ impl SetupMenu {
         self.revision = self.revision.wrapping_add(1);
     }
 
-    /// Toggles or cycles the currently selected setting; returns `true` if "Done / Return to Game" was activated.
-    pub fn activate_or_cycle(&mut self, _dir: i32, game_dir: &Path) -> bool {
+    /// Toggles the currently selected setting; returns `true` if "Save & Return" was activated.
+    pub fn activate_or_cycle(&mut self, game_dir: &Path) -> bool {
         let toggle = |v: &mut u16| *v = u16::from(*v == 0);
         match self.selected_row {
             0 => self.prefs.video_mode = if self.prefs.video_mode >= 2 { 1 } else { 2 },
@@ -109,8 +109,7 @@ impl SetupMenu {
             let row = ((my - 32) / 14) as usize;
             if row < self.num_rows() {
                 self.selected_row = row;
-                let dir = if mx < 160 { -1 } else { 1 };
-                return self.activate_or_cycle(dir, game_dir);
+                return self.activate_or_cycle(game_dir);
             }
         }
         false
@@ -189,7 +188,7 @@ mod tests {
             });
             for row in 1..=5 {
                 menu.selected_row = row;
-                assert!(!menu.activate_or_cycle(1, Path::new("/dev/null")));
+                assert!(!menu.activate_or_cycle(Path::new("/dev/null")));
             }
             assert_eq!(
                 [
@@ -203,7 +202,7 @@ mod tests {
             );
             for row in 1..=5 {
                 menu.selected_row = row;
-                assert!(!menu.activate_or_cycle(-1, Path::new("/dev/null")));
+                assert!(!menu.activate_or_cycle(Path::new("/dev/null")));
             }
             assert_eq!(
                 [

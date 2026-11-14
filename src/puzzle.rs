@@ -408,6 +408,8 @@ impl PuzzleSession {
             self.clamp_tray_scroll();
             self.held_piece = old_held;
             self.solved = old_solved;
+        } else {
+            self.hint_piece = None;
         }
         self.active_anim = None;
         self.drag_origin = None;
@@ -438,11 +440,11 @@ impl PuzzleSession {
         let col_w = grid_col_widths(dim);
         let row_h = grid_row_heights(dim);
 
-        let mut col_x = vec![0i32; dim + 1];
+        let mut col_x = [0i32; 9];
         for c in 0..dim {
             col_x[c + 1] = col_x[c] + col_w[c];
         }
-        let mut row_y = vec![0i32; dim + 1];
+        let mut row_y = [0i32; 9];
         for r in 0..dim {
             row_y[r + 1] = row_y[r] + row_h[r];
         }
@@ -591,7 +593,7 @@ impl PuzzleSession {
                             }
                         }));
                         let fill_val = dir == out_dir;
-                        rasterize_polygon(&poly, 0, 0, 0, 0, tw, th, &mut nodes, |y, x0, x1| {
+                        rasterize_polygon(&poly, 0, 0, [0, 0, tw, th], &mut nodes, |y, x0, x1| {
                             let row = (y * tw) as usize;
                             opacity[row + x0 as usize..=row + x1 as usize].fill(fill_val);
                         });
@@ -1069,7 +1071,7 @@ impl PuzzleSession {
         };
         let mut selected = None;
         let mut child_index = 0;
-        for (command_index, command) in commands.iter().enumerate() {
+        for command in commands {
             if let FrameCommand::SubFrame {
                 dx,
                 dy,
@@ -1077,11 +1079,12 @@ impl PuzzleSession {
                 flags,
             } = *command
             {
-                let center_hit = hotspots.get(child_index).is_some_and(|hotspot| {
+                let hotspot_idx = child_index;
+                child_index += 1;
+                let center_hit = hotspots.get(hotspot_idx).is_some_and(|hotspot| {
                     mx == hotspot.x as i32 + hotspot.width as i32 / 2
                         && my == hotspot.y as i32 + hotspot.height as i32 / 2
                 });
-                child_index += 1;
                 if flags & 0x00F0 != 0x0030
                     && (center_hit
                         || hit_test_frame(
@@ -1095,7 +1098,7 @@ impl PuzzleSession {
                             0,
                         ))
                 {
-                    selected = Some(command_index);
+                    selected = Some(hotspot_idx);
                 }
             }
         }

@@ -317,7 +317,7 @@ impl PuzzleRenderer {
         pointer_y: i32,
     ) {
         assert_eq!(rgba.len(), 320 * 200 * 4);
-        if session.solved || session.grid_dim == 1 {
+        if session.solved || session.grid_dim == 1 || session.active_anim.is_some() {
             return;
         }
         self.sync_asset(session);
