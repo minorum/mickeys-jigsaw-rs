@@ -13,19 +13,17 @@ use sdl3::pixels::{Color, PixelFormat};
 use sdl3::render::{BlendMode, Canvas, FPoint, FRect, ScaleMode, Texture, TextureCreator};
 use sdl3::video::{Window, WindowContext};
 
-use crate::app::{
-    AppRenderer, AppScreen, app_screen, has_mickey_cursor, should_exit, step_app,
-};
-use crate::graphics::{SCREEN_H, SCREEN_W};
-use crate::input::{
-    InputDeviceKind, InputKey, InputRouter, PlatformEvent, PointerButton, ViewportTransform,
-};
+use crate::app::{AppRenderer, AppScreen, app_screen, has_mickey_cursor, should_exit, step_app};
 use crate::ecs::components::{
     AnimationState, HintHighlight, PieceGeometry, PieceIdentity, PieceLocation,
 };
 use crate::ecs::resources::{
     ActivePuzzle, AudioStatus, GameConfig, InGameMenuState, RenderVersions, ScreenState,
     StaticAssets,
+};
+use crate::graphics::{SCREEN_H, SCREEN_W};
+use crate::input::{
+    InputDeviceKind, InputKey, InputRouter, PlatformEvent, PointerButton, ViewportTransform,
 };
 use crate::puzzle::ToolboxTarget;
 
@@ -240,15 +238,7 @@ impl<'a> SdlGameRenderer<'a> {
             && !has_active_anim;
 
         if interactive_board {
-            self.render_interactive_board(
-                canvas,
-                world,
-                app_renderer,
-                tf,
-                mx,
-                my,
-                picture_guide,
-            )?;
+            self.render_interactive_board(canvas, world, app_renderer, tf, mx, my, picture_guide)?;
             self.last_rendered_interactive = true;
         } else {
             let uploaded =
@@ -286,7 +276,10 @@ impl<'a> SdlGameRenderer<'a> {
                 (hud_ref_hovered, show_reference, active_device),
             )?;
         } else if screen == AppScreen::Playing
-            && let Some(active) = world.resource::<ActivePuzzle>().0.as_ref()
+            && let Some(active) = world
+                .resource::<ActivePuzzle>()
+                .0
+                .as_ref()
                 .filter(|p| p.timer_enabled)
         {
             let time = active.formatted_time();
@@ -335,7 +328,11 @@ impl<'a> SdlGameRenderer<'a> {
         };
         if self.board_tex_key != Some(board_key) {
             world.resource_scope(|world, assets: bevy_ecs::prelude::Mut<StaticAssets>| {
-                let tbx = if uses_ega { &assets.tbx_ega } else { &assets.tbx };
+                let tbx = if uses_ega {
+                    &assets.tbx_ega
+                } else {
+                    &assets.tbx
+                };
                 app_renderer.puzzle_renderer.render_board_layer_rgba(
                     world,
                     tbx,
@@ -436,9 +433,13 @@ impl<'a> SdlGameRenderer<'a> {
             .as_ref()
             .is_none_or(|(k, _)| *k != tbx_key)
         {
-            let (tx, ty, tw, th) = world.resource_scope(
-                |world, assets: bevy_ecs::prelude::Mut<StaticAssets>| {
-                    let tbx = if uses_ega { &assets.tbx_ega } else { &assets.tbx };
+            let (tx, ty, tw, th) =
+                world.resource_scope(|world, assets: bevy_ecs::prelude::Mut<StaticAssets>| {
+                    let tbx = if uses_ega {
+                        &assets.tbx_ega
+                    } else {
+                        &assets.tbx
+                    };
                     app_renderer.puzzle_renderer.render_toolbox_layer_rgba(
                         world,
                         tbx,
@@ -447,8 +448,7 @@ impl<'a> SdlGameRenderer<'a> {
                         py,
                         &mut self.scratch_rgba,
                     )
-                },
-            );
+                });
             let tex =
                 Self::upload_rgba_layer(self.creator, tw, th, &self.scratch_rgba, BlendMode::None)?;
             self.toolbox_layer = Some((

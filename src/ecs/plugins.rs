@@ -241,8 +241,7 @@ impl Plugin for RenderTrackingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RenderVersions>().add_systems(
             PostUpdate,
-            change_tracking::track_render_changes_system
-                .after(flush_state_transitions_system),
+            change_tracking::track_render_changes_system.after(flush_state_transitions_system),
         );
     }
 }

@@ -10,7 +10,9 @@ use crate::app::{AppInput, BrowserTarget, InGameMenuCommand};
 use crate::assets::{FontAsset, Preferences, PuzzleAsset, ToolboxAsset};
 use crate::decompress::IlbmImage;
 use crate::graphics::Framebuffer;
-use crate::puzzle::{LcgRng, PLAYFIELD_H, PLAYFIELD_W, TOOLBOX_W, ToolboxTarget, grid_col_widths, grid_row_heights};
+use crate::puzzle::{
+    LcgRng, PLAYFIELD_H, PLAYFIELD_W, TOOLBOX_W, ToolboxTarget, grid_col_widths, grid_row_heights,
+};
 use crate::setup::SetupMenu;
 
 /// Global configuration and user preferences.

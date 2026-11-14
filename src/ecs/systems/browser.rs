@@ -221,11 +221,7 @@ pub fn request_quit(screen_state: &mut ScreenState, audio_out: &mut MessageWrite
     screen_state.quit_timer.reset();
 }
 
-fn reload_preview(
-    browser: &mut BrowserState,
-    config: &GameConfig,
-    screen_state: &mut ScreenState,
-) {
+fn reload_preview(browser: &mut BrowserState, config: &GameConfig, screen_state: &mut ScreenState) {
     let use_ega = config.prefs.video_mode >= 2;
     match PuzzleAsset::load(&config.game_dir, browser.selected_puzzle, use_ega) {
         Ok(asset) => {

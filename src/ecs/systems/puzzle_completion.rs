@@ -75,9 +75,6 @@ pub fn puzzle_completion_system(
         );
     } else if meta.grid_dim > 1 {
         audio_out.write(AudioCommand::PlayCommon(CommonSound::NotDoneYet));
-        meta.set_status_message(
-            "Not finished yet. Push F1 for a hint or F2 to finish.",
-            5.0,
-        );
+        meta.set_status_message("Not finished yet. Push F1 for a hint or F2 to finish.", 5.0);
     }
 }

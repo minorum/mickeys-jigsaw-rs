@@ -95,9 +95,7 @@ pub fn puzzle_timers_and_animation_system(
             }
 
             let mut started_loop_audio = false;
-            if !queued_playing
-                && let Some((sound, descriptor)) = anim.looping_sound
-            {
+            if !queued_playing && let Some((sound, descriptor)) = anim.looping_sound {
                 let desc = &meta.asset.sounds[sound].sounds[descriptor];
                 started_loop_audio = true;
                 if descriptor == 0 {

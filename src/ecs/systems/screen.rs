@@ -7,8 +7,8 @@ use bevy_time::{Real, Time, Virtual};
 use crate::app::AppScreen;
 use crate::ecs::events::AudioCommand;
 use crate::ecs::resources::{
-    ActivePuzzle, BrowserState, GameConfig, InGameMenuState, InputSnapshot, ScreenState, SetupState,
-    StaticAssets,
+    ActivePuzzle, BrowserState, GameConfig, InGameMenuState, InputSnapshot, ScreenState,
+    SetupState, StaticAssets,
 };
 
 pub fn in_setup(state: Res<State<AppScreen>>) -> bool {
@@ -98,7 +98,12 @@ pub fn global_and_screen_system(
         AppScreen::Title => {
             screen_state.screen_timer.tick(real_time.delta());
             if input.escape {
-                set_screen(cur_screen, &mut next_state, AppScreen::Browser, &mut audio_out);
+                set_screen(
+                    cur_screen,
+                    &mut next_state,
+                    AppScreen::Browser,
+                    &mut audio_out,
+                );
             } else if input.left_pressed
                 || input.space
                 || input.enter
@@ -116,7 +121,12 @@ pub fn global_and_screen_system(
         AppScreen::Credits { page } => {
             screen_state.screen_timer.tick(real_time.delta());
             if input.escape {
-                set_screen(cur_screen, &mut next_state, AppScreen::Browser, &mut audio_out);
+                set_screen(
+                    cur_screen,
+                    &mut next_state,
+                    AppScreen::Browser,
+                    &mut audio_out,
+                );
             } else if input.left_pressed
                 || input.space
                 || input.enter

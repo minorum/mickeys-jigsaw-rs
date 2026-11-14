@@ -203,6 +203,7 @@ impl LcgRng {
         Self(seed | 1)
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> usize {
         self.0 = self.0.wrapping_mul(214013).wrapping_add(2531011);
         ((self.0 >> 16) & 0x7FFF) as usize

@@ -85,8 +85,7 @@ pub fn in_game_menu_system(
         if input.pointer_moved && input.move_x == 0 && input.move_y == 0 && !input.enter {
             meta.keyboard_pointer = None;
         }
-        if !input.left_pressed && !input.right_pressed && (input.move_x != 0 || input.move_y != 0)
-        {
+        if !input.left_pressed && !input.right_pressed && (input.move_x != 0 || input.move_y != 0) {
             move_keyboard_pointer_meta(meta, input.move_x as f32, input.move_y as f32, dt);
         }
     }
@@ -282,9 +281,10 @@ pub fn return_to_browser(
     menu.open = false;
     menu.pressed = None;
     menu.confirm_quit_puzzle = false;
-    let has_progress = piece_q
-        .iter()
-        .any(|(_, loc)| loc.is_placed() || matches!(*loc, PieceLocation::Held { group_order, .. } if group_order > 0));
+    let has_progress = piece_q.iter().any(|(_, loc)| {
+        loc.is_placed()
+            || matches!(*loc, PieceLocation::Held { group_order, .. } if group_order > 0)
+    });
     let held_count = piece_q.iter().filter(|(_, loc)| loc.is_held()).count();
     let unfinished = active_puzzle
         .0
@@ -296,10 +296,7 @@ pub fn return_to_browser(
         audio_out.write(AudioCommand::PlayCommon(CommonSound::NotDoneYet));
         if let Some(meta) = &mut active_puzzle.0 {
             meta.drag_origin = None;
-            meta.set_status_message(
-                "We're not done yet. Exit? (Enter/Click=Yes, Esc=No)",
-                8.0,
-            );
+            meta.set_status_message("We're not done yet. Exit? (Enter/Click=Yes, Esc=No)", 8.0);
         }
         return;
     }
@@ -372,7 +369,14 @@ fn execute_menu_command(
     menu.pressed = None;
     match cmd {
         InGameMenuCommand::OtherPicture => {
-            return_to_browser(cur_screen, next_state, menu, active_puzzle, piece_q, audio_out);
+            return_to_browser(
+                cur_screen,
+                next_state,
+                menu,
+                active_puzzle,
+                piece_q,
+                audio_out,
+            );
         }
         InGameMenuCommand::Setup => {
             open_setup_screen(true, cur_screen, next_state, menu, setup, config, audio_out);

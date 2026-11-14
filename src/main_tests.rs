@@ -46,7 +46,9 @@ fn app_held_piece(app: &mut App) -> Option<usize> {
         .query::<(&PieceIdentity, &PieceLocation)>()
         .iter(app.world())
         .find_map(|(id, loc)| match *loc {
-            PieceLocation::Held { is_anchor: true, .. } => Some(id.index),
+            PieceLocation::Held {
+                is_anchor: true, ..
+            } => Some(id.index),
             _ => None,
         })
 }
@@ -181,7 +183,12 @@ fn app_replace_scene_asset(app: &mut App, asset: PuzzleAsset) {
         .run_system_once(
             move |mut commands: Commands,
                   mut active_puzzle: ResMut<ActivePuzzle>,
-                  mut piece_q: Query<(Entity, &PieceIdentity, &mut PieceGeometry, &mut PieceSprite)>,
+                  mut piece_q: Query<(
+                Entity,
+                &PieceIdentity,
+                &mut PieceGeometry,
+                &mut PieceSprite,
+            )>,
                   hotspot_q: Query<Entity, With<SceneHotspot>>,
                   anim_q: Query<Entity, With<AnimationState>>| {
                 let Some(meta) = &mut active_puzzle.0 else {
@@ -210,18 +217,24 @@ fn app_can_resume_selected(app: &App) -> bool {
 }
 
 fn app_start_selected_puzzle(app: &mut App) {
-    step_app(app, &AppInput {
-        pointer_x: 210,
-        pointer_y: 175,
-        left_pressed: true,
-        ..Default::default()
-    });
-    step_app(app, &AppInput {
-        pointer_x: 210,
-        pointer_y: 175,
-        left_released: true,
-        ..Default::default()
-    });
+    step_app(
+        app,
+        &AppInput {
+            pointer_x: 210,
+            pointer_y: 175,
+            left_pressed: true,
+            ..Default::default()
+        },
+    );
+    step_app(
+        app,
+        &AppInput {
+            pointer_x: 210,
+            pointer_y: 175,
+            left_released: true,
+            ..Default::default()
+        },
+    );
 }
 
 fn app_restart_selected_puzzle(app: &mut App) {
@@ -231,12 +244,15 @@ fn app_restart_selected_puzzle(app: &mut App) {
 }
 
 fn app_right_click(app: &mut App, x: i32, y: i32) -> bool {
-    step_app(app, &AppInput {
-        pointer_x: x,
-        pointer_y: y,
-        right_pressed: true,
-        ..Default::default()
-    });
+    step_app(
+        app,
+        &AppInput {
+            pointer_x: x,
+            pointer_y: y,
+            right_pressed: true,
+            ..Default::default()
+        },
+    );
     app_held_piece(app).is_some()
 }
 
@@ -262,7 +278,11 @@ fn app_hint_piece(app: &mut App) -> Option<(usize, f32)> {
 }
 
 fn app_sync_prefs_from_setup(app: &mut App) {
-    { let mut s = AudioStatus::default(); sync_audio_status(app.world().non_send::<AudioEngine>(), &mut s); *app.world_mut().resource_mut::<AudioStatus>() = s; }
+    {
+        let mut s = AudioStatus::default();
+        sync_audio_status(app.world().non_send::<AudioEngine>(), &mut s);
+        *app.world_mut().resource_mut::<AudioStatus>() = s;
+    }
     app.world_mut()
         .run_system_once(
             |mut commands: Commands,
@@ -294,36 +314,48 @@ fn app_sync_prefs_from_setup(app: &mut App) {
 }
 
 fn app_click(app: &mut App, x: i32, y: i32) {
-    step_app(app, &AppInput {
-        pointer_x: x,
-        pointer_y: y,
-        left_pressed: true,
-        ..Default::default()
-    });
-    step_app(app, &AppInput {
-        pointer_x: x,
-        pointer_y: y,
-        left_released: true,
-        ..Default::default()
-    });
+    step_app(
+        app,
+        &AppInput {
+            pointer_x: x,
+            pointer_y: y,
+            left_pressed: true,
+            ..Default::default()
+        },
+    );
+    step_app(
+        app,
+        &AppInput {
+            pointer_x: x,
+            pointer_y: y,
+            left_released: true,
+            ..Default::default()
+        },
+    );
 }
 
 fn app_press(app: &mut App, x: i32, y: i32) {
-    step_app(app, &AppInput {
-        pointer_x: x,
-        pointer_y: y,
-        left_pressed: true,
-        ..Default::default()
-    });
+    step_app(
+        app,
+        &AppInput {
+            pointer_x: x,
+            pointer_y: y,
+            left_pressed: true,
+            ..Default::default()
+        },
+    );
 }
 
 fn app_release(app: &mut App, x: i32, y: i32) {
-    step_app(app, &AppInput {
-        pointer_x: x,
-        pointer_y: y,
-        left_released: true,
-        ..Default::default()
-    });
+    step_app(
+        app,
+        &AppInput {
+            pointer_x: x,
+            pointer_y: y,
+            left_released: true,
+            ..Default::default()
+        },
+    );
 }
 
 fn app_held_group_pieces(app: &mut App) -> Vec<(usize, i32, i32)> {
@@ -349,30 +381,44 @@ fn app_held_group_pieces(app: &mut App) -> Vec<(usize, i32, i32)> {
 
 fn app_auto_solve(app: &mut App) {
     app_set_screen(app, AppScreen::Playing);
-    step_app(app, &AppInput {
-        f2: true,
-        ..Default::default()
-    });
+    step_app(
+        app,
+        &AppInput {
+            f2: true,
+            ..Default::default()
+        },
+    );
 }
 
 fn app_trigger_hint(app: &mut App) {
     app_set_screen(app, AppScreen::Playing);
-    step_app(app, &AppInput {
-        f1: true,
-        ..Default::default()
-    });
+    step_app(
+        app,
+        &AppInput {
+            f1: true,
+            ..Default::default()
+        },
+    );
 }
 
 fn app_open_setup(app: &mut App, return_to_playing: bool) {
     if return_to_playing {
         app_set_screen(app, AppScreen::Playing);
-        step_app(app, &AppInput {
-            f4: true,
-            ..Default::default()
-        });
+        step_app(
+            app,
+            &AppInput {
+                f4: true,
+                ..Default::default()
+            },
+        );
     } else {
         app.world_mut().resource_mut::<SetupState>().menu.error = None;
-        app_set_screen(app, AppScreen::Setup { return_to_playing: false });
+        app_set_screen(
+            app,
+            AppScreen::Setup {
+                return_to_playing: false,
+            },
+        );
     }
 }
 
@@ -410,10 +456,13 @@ fn app_close_in_game_menu(app: &mut App, toggle_toolbox: bool) {
 fn app_exec_in_game_menu(app: &mut App, cmd: crate::app::InGameMenuCommand) {
     app_open_in_game_menu(app);
     app.world_mut().resource_mut::<InGameMenuState>().selected = cmd as usize;
-    step_app(app, &AppInput {
-        enter: true,
-        ..Default::default()
-    });
+    step_app(
+        app,
+        &AppInput {
+            enter: true,
+            ..Default::default()
+        },
+    );
 }
 
 #[test]
@@ -526,7 +575,14 @@ fn completed_picture_is_unchanged_by_timer_setting() {
         app_meta_mut(&mut app).solved = true;
         app_meta_mut(&mut app).elapsed_secs = 3661.0;
         let mut without_timer = Framebuffer::new();
-        renderer.render(app.world_mut(), &mut without_timer, &toolbox, &font, 160, 100);
+        renderer.render(
+            app.world_mut(),
+            &mut without_timer,
+            &toolbox,
+            &font,
+            160,
+            100,
+        );
         app_meta_mut(&mut app).timer_enabled = true;
         let mut with_timer = Framebuffer::new();
         renderer.render(app.world_mut(), &mut with_timer, &toolbox, &font, 160, 100);
@@ -569,7 +625,9 @@ fn test_browser() -> App {
 #[test]
 fn preset_progress_survives_resume_and_video_switching() {
     let mut app = test_browser();
-    app.world_mut().resource_mut::<BrowserState>().selected_grid_dim = 1;
+    app.world_mut()
+        .resource_mut::<BrowserState>()
+        .selected_grid_dim = 1;
     app_start_selected_puzzle(&mut app);
     let tray = app_tray_order(&mut app);
     let first = tray[0];
@@ -607,14 +665,22 @@ fn common_captions_render_and_respect_text_preference() {
     for ega in [false, true] {
         app.world_mut().resource_mut::<BrowserState>().preview_asset =
             PuzzleAsset::load(&game_dir, 1, ega).unwrap();
-        app.world_mut().resource_mut::<GameConfig>().prefs.text_msg_on = 0;
+        app.world_mut()
+            .resource_mut::<GameConfig>()
+            .prefs
+            .text_msg_on = 0;
         renderer.render(app.world_mut(), 160, 100);
         let baseline = renderer.fb.clone();
-        app.world_mut().non_send_mut::<AudioEngine>().play_common(CommonSound::ChooseSize);
+        app.world_mut()
+            .non_send_mut::<AudioEngine>()
+            .play_common(CommonSound::ChooseSize);
         renderer.render(app.world_mut(), 160, 100);
         let hidden = renderer.fb.clone();
         assert_eq!(baseline.pixels, hidden.pixels);
-        app.world_mut().resource_mut::<GameConfig>().prefs.text_msg_on = 1;
+        app.world_mut()
+            .resource_mut::<GameConfig>()
+            .prefs
+            .text_msg_on = 1;
         renderer.render(app.world_mut(), 160, 100);
         let shown = renderer.fb.clone();
         assert_ne!(baseline.pixels, shown.pixels);
@@ -633,12 +699,22 @@ fn common_captions_render_and_respect_text_preference() {
 fn preset_pickup_captions_have_visible_glyphs() {
     let mut app = test_browser();
     let mut renderer = AppRenderer::new();
-    app.world_mut().resource_mut::<GameConfig>().prefs.text_msg_on = 1;
-    app.world_mut().resource_mut::<BrowserState>().selected_grid_dim = 1;
+    app.world_mut()
+        .resource_mut::<GameConfig>()
+        .prefs
+        .text_msg_on = 1;
+    app.world_mut()
+        .resource_mut::<BrowserState>()
+        .selected_grid_dim = 1;
     for ega in [false, true] {
-        app.world_mut().resource_mut::<GameConfig>().prefs.video_mode = if ega { 2 } else { 0 };
+        app.world_mut()
+            .resource_mut::<GameConfig>()
+            .prefs
+            .video_mode = if ega { 2 } else { 0 };
         for num in 1..=15 {
-            app.world_mut().resource_mut::<BrowserState>().selected_puzzle = num;
+            app.world_mut()
+                .resource_mut::<BrowserState>()
+                .selected_puzzle = num;
             app_restart_selected_puzzle(&mut app);
             app_click(&mut app, 20, 40);
             let held = app_held_piece(&mut app).unwrap();
@@ -694,7 +770,11 @@ fn setup_video_change_preserves_active_progress_and_rolls_back_failure() {
     }
     let tray = app_tray_order(&mut app);
     for mode in [2, 1] {
-        app.world_mut().resource_mut::<SetupState>().menu.prefs.video_mode = mode;
+        app.world_mut()
+            .resource_mut::<SetupState>()
+            .menu
+            .prefs
+            .video_mode = mode;
         app_sync_prefs_from_setup(&mut app);
         assert_eq!(
             app_meta(&app).asset.sprites[0].bpp,
@@ -717,7 +797,11 @@ fn setup_video_change_preserves_active_progress_and_rolls_back_failure() {
     }
     let palette = app_meta(&app).asset.palette;
     app.world_mut().resource_mut::<GameConfig>().game_dir = PathBuf::from("/dev/null");
-    app.world_mut().resource_mut::<SetupState>().menu.prefs.video_mode = 2;
+    app.world_mut()
+        .resource_mut::<SetupState>()
+        .menu
+        .prefs
+        .video_mode = 2;
     app_sync_prefs_from_setup(&mut app);
     assert!(app.world().resource::<ScreenState>().error.is_some());
     assert_eq!(app.world().resource::<GameConfig>().prefs.video_mode, 1);
@@ -737,12 +821,17 @@ fn setup_video_change_preserves_active_progress_and_rolls_back_failure() {
 #[test]
 fn setup_video_change_keeps_solved_state_and_supports_ega_fallback() {
     let mut app = test_browser();
-    app.world_mut().resource_mut::<BrowserState>().selected_puzzle = 6;
+    app.world_mut()
+        .resource_mut::<BrowserState>()
+        .selected_puzzle = 6;
     app_start_selected_puzzle(&mut app);
-    step_app(&mut app, &AppInput {
-        f2: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            f2: true,
+            ..Default::default()
+        },
+    );
     assert!(
         app.world_mut()
             .query::<&AnimationState>()
@@ -750,7 +839,11 @@ fn setup_video_change_keeps_solved_state_and_supports_ega_fallback() {
             .next()
             .is_some()
     );
-    app.world_mut().resource_mut::<SetupState>().menu.prefs.video_mode = 2;
+    app.world_mut()
+        .resource_mut::<SetupState>()
+        .menu
+        .prefs
+        .video_mode = 2;
     app_sync_prefs_from_setup(&mut app);
     assert!(app_meta(&app).solved);
     assert!(app_all_placed(&mut app));
@@ -773,7 +866,9 @@ fn setup_video_change_keeps_solved_state_and_supports_ega_fallback() {
 fn video_switch_is_atomic_when_preview_and_paused_puzzle_differ() {
     let mut app = test_browser();
     app_start_selected_puzzle(&mut app);
-    app.world_mut().resource_mut::<BrowserState>().selected_puzzle = 2;
+    app.world_mut()
+        .resource_mut::<BrowserState>()
+        .selected_puzzle = 2;
     {
         let game_dir = app.world().resource::<GameConfig>().game_dir.clone();
         let use_ega = app.world().resource::<GameConfig>().session_use_ega;
@@ -791,7 +886,11 @@ fn video_switch_is_atomic_when_preview_and_paused_puzzle_differ() {
     let orig_dir = app.world().resource::<GameConfig>().game_dir.clone();
     std::fs::copy(orig_dir.join("P02.PZ4"), dir.join("P02.PZ4")).unwrap();
     app.world_mut().resource_mut::<GameConfig>().game_dir = dir.clone();
-    app.world_mut().resource_mut::<SetupState>().menu.prefs.video_mode = 2;
+    app.world_mut()
+        .resource_mut::<SetupState>()
+        .menu
+        .prefs
+        .video_mode = 2;
     app_sync_prefs_from_setup(&mut app);
     app.world_mut().resource_mut::<GameConfig>().game_dir = test_game_dir();
     std::fs::remove_dir_all(dir).unwrap();
@@ -803,7 +902,11 @@ fn video_switch_is_atomic_when_preview_and_paused_puzzle_differ() {
     );
     assert_eq!(app_meta(&app).asset.palette, old_active);
     assert!(!app.world().resource::<GameConfig>().session_use_ega);
-    app.world_mut().resource_mut::<SetupState>().menu.prefs.video_mode = 2;
+    app.world_mut()
+        .resource_mut::<SetupState>()
+        .menu
+        .prefs
+        .video_mode = 2;
     app_sync_prefs_from_setup(&mut app);
     assert!(app.world().resource::<ScreenState>().error.is_none());
     assert_eq!(app.world().resource::<BrowserState>().preview_asset.id, 2);
@@ -813,7 +916,9 @@ fn video_switch_is_atomic_when_preview_and_paused_puzzle_differ() {
     );
     assert_eq!(app_meta(&app).puzzle_num, 1);
     assert_eq!(app_meta(&app).asset.sprites[0].bpp, 4);
-    app.world_mut().resource_mut::<BrowserState>().selected_puzzle = 1;
+    app.world_mut()
+        .resource_mut::<BrowserState>()
+        .selected_puzzle = 1;
     {
         let game_dir = app.world().resource::<GameConfig>().game_dir.clone();
         let use_ega = app.world().resource::<GameConfig>().session_use_ega;
@@ -874,18 +979,32 @@ fn browser_only_resumes_matching_unfinished_puzzles() {
     assert!(!app_can_resume_selected(&app));
     app_start_selected_puzzle(&mut app);
     assert!(app_can_resume_selected(&app));
-    app.world_mut().resource_mut::<BrowserState>().selected_puzzle = 2;
+    app.world_mut()
+        .resource_mut::<BrowserState>()
+        .selected_puzzle = 2;
     assert!(!app_can_resume_selected(&app));
-    app.world_mut().resource_mut::<BrowserState>().selected_puzzle = 1;
-    app.world_mut().resource_mut::<BrowserState>().selected_grid_dim = 4;
+    app.world_mut()
+        .resource_mut::<BrowserState>()
+        .selected_puzzle = 1;
+    app.world_mut()
+        .resource_mut::<BrowserState>()
+        .selected_grid_dim = 4;
     assert!(!app_can_resume_selected(&app));
-    app.world_mut().resource_mut::<BrowserState>().selected_grid_dim = 3;
+    app.world_mut()
+        .resource_mut::<BrowserState>()
+        .selected_grid_dim = 3;
     app.world_mut().resource_mut::<BrowserState>().curved_edges = false;
     assert!(!app_can_resume_selected(&app));
     app.world_mut().resource_mut::<BrowserState>().curved_edges = true;
-    app.world_mut().resource_mut::<GameConfig>().prefs.video_mode = 2;
+    app.world_mut()
+        .resource_mut::<GameConfig>()
+        .prefs
+        .video_mode = 2;
     assert!(!app_can_resume_selected(&app));
-    app.world_mut().resource_mut::<GameConfig>().prefs.video_mode = 1;
+    app.world_mut()
+        .resource_mut::<GameConfig>()
+        .prefs
+        .video_mode = 1;
     app_meta_mut(&mut app).solved = true;
     assert!(!app_can_resume_selected(&app));
 }
@@ -1442,7 +1561,10 @@ fn click_to_pick_place_complete_and_skip_animation() {
                     }
                     assert!(app_meta(&app).solved);
                     assert!(
-                        app.world().non_send::<AudioEngine>().common_caption().is_none(),
+                        app.world()
+                            .non_send::<AudioEngine>()
+                            .common_caption()
+                            .is_none(),
                         "stale pickup caption after P{num:02}"
                     );
                     assert!(app_tray_order(&mut app).is_empty());
@@ -1503,10 +1625,13 @@ fn animation_preserves_elapsed_remainder() {
         looping_sound: None,
     });
     let frame_secs = app_active_anim(&mut app).unwrap().frame_delay_secs;
-    step_app(&mut app, &AppInput {
-        dt: 2.5 * frame_secs,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            dt: 2.5 * frame_secs,
+            ..Default::default()
+        },
+    );
     let anim = app_active_anim(&mut app).unwrap();
     assert_eq!(anim.cur_frame, 2);
     assert!((anim.tick_accum - 0.5 * frame_secs).abs() < 0.00001);
@@ -1517,10 +1642,13 @@ fn animation_preserves_elapsed_remainder() {
         anim.tick_accum = 0.0;
         anim.repetitions_left = 2;
     }
-    step_app(&mut app, &AppInput {
-        dt: 4.5 * frame_secs,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            dt: 4.5 * frame_secs,
+            ..Default::default()
+        },
+    );
     let anim = app_active_anim(&mut app).unwrap();
     assert_eq!(anim.cur_frame, 1);
     assert_eq!(anim.repetitions_left, 1);
@@ -1585,10 +1713,16 @@ fn thumbnails_fit_inside_their_tray_slot() {
 #[test]
 fn toolbox_graphics_match_actual_scene_depth_including_fallbacks() {
     let mut app = test_browser();
-    app.world_mut().resource_mut::<SetupState>().menu.prefs.video_mode = 2;
+    app.world_mut()
+        .resource_mut::<SetupState>()
+        .menu
+        .prefs
+        .video_mode = 2;
     app_sync_prefs_from_setup(&mut app);
     for id in [1, 6, 7, 10] {
-        app.world_mut().resource_mut::<BrowserState>().selected_puzzle = id;
+        app.world_mut()
+            .resource_mut::<BrowserState>()
+            .selected_puzzle = id;
         app_restart_selected_puzzle(&mut app);
         app.world_mut().non_send_mut::<AudioEngine>().update(60.0);
         let bpp = app_meta(&app).asset.sprites[0].bpp;
@@ -1629,7 +1763,11 @@ fn browser_and_puzzle_controls_use_palette_colors() {
         assert_eq!(fb.get_pixel(3, 19), fb.color_index([85; 3]), "ega={ega}");
         assert_ne!(fb.get_pixel(1, 100), fb.get_pixel(3, 19), "ega={ega}");
         let mut app = test_browser();
-        app.world_mut().resource_mut::<SetupState>().menu.prefs.video_mode = if ega { 2 } else { 1 };
+        app.world_mut()
+            .resource_mut::<SetupState>()
+            .menu
+            .prefs
+            .video_mode = if ega { 2 } else { 1 };
         app_sync_prefs_from_setup(&mut app);
         let mut app_renderer = AppRenderer::new();
         app_renderer.render(app.world_mut(), 160, 100);
@@ -1683,44 +1821,81 @@ fn printable_export_preserves_bitmap_and_reports_write_failure() {
 fn browser_navigation_wraps_and_buttons_align() {
     let mut app = build_game_app(test_game_dir(), true).unwrap();
     app_set_screen(&mut app, AppScreen::Browser);
-    app.world_mut().resource_mut::<BrowserState>().selected_puzzle = 1;
+    app.world_mut()
+        .resource_mut::<BrowserState>()
+        .selected_puzzle = 1;
     let prev_btn = BROWSER_BUTTONS[0];
     let next_btn = BROWSER_BUTTONS[1];
-    app_click(&mut app, prev_btn.x + prev_btn.w / 2, prev_btn.y + prev_btn.h / 2);
+    app_click(
+        &mut app,
+        prev_btn.x + prev_btn.w / 2,
+        prev_btn.y + prev_btn.h / 2,
+    );
     assert_eq!(app.world().resource::<BrowserState>().selected_puzzle, 15);
-    app_click(&mut app, next_btn.x + next_btn.w / 2, next_btn.y + next_btn.h / 2);
+    app_click(
+        &mut app,
+        next_btn.x + next_btn.w / 2,
+        next_btn.y + next_btn.h / 2,
+    );
     assert_eq!(app.world().resource::<BrowserState>().selected_puzzle, 1);
 
-    app.world_mut().resource_mut::<BrowserState>().selected_grid_dim = 1;
-    step_app(&mut app, &AppInput {
-        down: true,
-        ..Default::default()
-    });
+    app.world_mut()
+        .resource_mut::<BrowserState>()
+        .selected_grid_dim = 1;
+    step_app(
+        &mut app,
+        &AppInput {
+            down: true,
+            ..Default::default()
+        },
+    );
     assert_eq!(app.world().resource::<BrowserState>().selected_grid_dim, 2);
-    step_app(&mut app, &AppInput {
-        up: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            up: true,
+            ..Default::default()
+        },
+    );
     assert_eq!(app.world().resource::<BrowserState>().selected_grid_dim, 1);
-    step_app(&mut app, &AppInput {
-        up: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            up: true,
+            ..Default::default()
+        },
+    );
     assert_eq!(app.world().resource::<BrowserState>().selected_grid_dim, 8);
-    step_app(&mut app, &AppInput {
-        down: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            down: true,
+            ..Default::default()
+        },
+    );
     assert_eq!(app.world().resource::<BrowserState>().selected_grid_dim, 1);
 
-    app.world_mut().resource_mut::<BrowserState>().selected_grid_dim = 3;
+    app.world_mut()
+        .resource_mut::<BrowserState>()
+        .selected_grid_dim = 3;
     let edges_was = app.world().resource::<BrowserState>().curved_edges;
     let edges_btn = BROWSER_BUTTONS[3];
-    app_click(&mut app, edges_btn.x + edges_btn.w / 2, edges_btn.y + edges_btn.h / 2);
-    assert_ne!(app.world().resource::<BrowserState>().curved_edges, edges_was);
+    app_click(
+        &mut app,
+        edges_btn.x + edges_btn.w / 2,
+        edges_btn.y + edges_btn.h / 2,
+    );
+    assert_ne!(
+        app.world().resource::<BrowserState>().curved_edges,
+        edges_was
+    );
 
     let setup_btn = BROWSER_BUTTONS[4];
-    app_click(&mut app, setup_btn.x + setup_btn.w / 2, setup_btn.y + setup_btn.h / 2);
+    app_click(
+        &mut app,
+        setup_btn.x + setup_btn.w / 2,
+        setup_btn.y + setup_btn.h / 2,
+    );
     assert_eq!(
         app_screen(&app),
         AppScreen::Setup {
@@ -2016,18 +2191,33 @@ fn browser_present_signature_tracks_and_expires_common_captions() {
     let dir = test_game_dir();
     let mut app = build_game_app(dir, true).unwrap();
     app_set_screen(&mut app, AppScreen::Browser);
-    app.world_mut().resource_mut::<GameConfig>().prefs.text_msg_on = 1;
+    app.world_mut()
+        .resource_mut::<GameConfig>()
+        .prefs
+        .text_msg_on = 1;
 
     let idle_sig = present_signature(app.world_mut(), 120, 80, false, false);
     assert!(idle_sig.is_some());
 
-    app.world_mut().non_send_mut::<AudioEngine>().play_common(CommonSound::NextPicture);
-    { let mut s = AudioStatus::default(); sync_audio_status(app.world().non_send::<AudioEngine>(), &mut s); *app.world_mut().resource_mut::<AudioStatus>() = s; }
+    app.world_mut()
+        .non_send_mut::<AudioEngine>()
+        .play_common(CommonSound::NextPicture);
+    {
+        let mut s = AudioStatus::default();
+        sync_audio_status(app.world().non_send::<AudioEngine>(), &mut s);
+        *app.world_mut().resource_mut::<AudioStatus>() = s;
+    }
     let next_sig = present_signature(app.world_mut(), 120, 80, false, false);
     assert_ne!(idle_sig, next_sig);
 
-    app.world_mut().non_send_mut::<AudioEngine>().play_common(CommonSound::StartPuzzle);
-    { let mut s = AudioStatus::default(); sync_audio_status(app.world().non_send::<AudioEngine>(), &mut s); *app.world_mut().resource_mut::<AudioStatus>() = s; }
+    app.world_mut()
+        .non_send_mut::<AudioEngine>()
+        .play_common(CommonSound::StartPuzzle);
+    {
+        let mut s = AudioStatus::default();
+        sync_audio_status(app.world().non_send::<AudioEngine>(), &mut s);
+        *app.world_mut().resource_mut::<AudioStatus>() = s;
+    }
     let start_sig = present_signature(app.world_mut(), 120, 80, false, false);
     assert_ne!(next_sig, start_sig);
 
@@ -2035,8 +2225,17 @@ fn browser_present_signature_tracks_and_expires_common_captions() {
     for _ in 0..20 {
         app.world_mut().non_send_mut::<AudioEngine>().update(0.5);
     }
-    { let mut s = AudioStatus::default(); sync_audio_status(app.world().non_send::<AudioEngine>(), &mut s); *app.world_mut().resource_mut::<AudioStatus>() = s; }
-    assert!(app.world().non_send::<AudioEngine>().common_caption().is_none());
+    {
+        let mut s = AudioStatus::default();
+        sync_audio_status(app.world().non_send::<AudioEngine>(), &mut s);
+        *app.world_mut().resource_mut::<AudioStatus>() = s;
+    }
+    assert!(
+        app.world()
+            .non_send::<AudioEngine>()
+            .common_caption()
+            .is_none()
+    );
     let expired_sig = present_signature(app.world_mut(), 120, 80, false, false);
     assert_eq!(expired_sig, idle_sig);
 }
@@ -2134,29 +2333,52 @@ fn app_state_transitions_render_cache_and_captions_without_assets() {
     assert!(renderer.render_if_needed(app.world_mut(), 100, 100, false, true));
     assert!(!renderer.render_if_needed(app.world_mut(), 120, 100, false, true));
 
-    step_app(&mut app, &AppInput {
-        enter: true,
-        ..AppInput::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            enter: true,
+            ..AppInput::default()
+        },
+    );
     assert_eq!(app_screen(&app), AppScreen::Browser);
     assert!(renderer.render_if_needed(app.world_mut(), 100, 100, false, true));
     assert!(!renderer.render_if_needed(app.world_mut(), 140, 120, false, true));
 
     // Common caption invalidates Browser signature and expires back to idle signature
     let idle_sig = present_signature(app.world_mut(), 100, 100, false, false);
-    app.world_mut().non_send_mut::<AudioEngine>().play_common(CommonSound::NextPicture);
-    { let mut s = AudioStatus::default(); sync_audio_status(app.world().non_send::<AudioEngine>(), &mut s); *app.world_mut().resource_mut::<AudioStatus>() = s; }
-    assert_ne!(present_signature(app.world_mut(), 100, 100, false, false), idle_sig);
+    app.world_mut()
+        .non_send_mut::<AudioEngine>()
+        .play_common(CommonSound::NextPicture);
+    {
+        let mut s = AudioStatus::default();
+        sync_audio_status(app.world().non_send::<AudioEngine>(), &mut s);
+        *app.world_mut().resource_mut::<AudioStatus>() = s;
+    }
+    assert_ne!(
+        present_signature(app.world_mut(), 100, 100, false, false),
+        idle_sig
+    );
     assert!(renderer.render_if_needed(app.world_mut(), 100, 100, false, false));
 
     for _ in 0..20 {
-        step_app(&mut app, &AppInput {
-            dt: 0.5,
-            ..AppInput::default()
-        });
+        step_app(
+            &mut app,
+            &AppInput {
+                dt: 0.5,
+                ..AppInput::default()
+            },
+        );
     }
-    assert!(app.world().non_send::<AudioEngine>().common_caption().is_none());
-    assert_eq!(present_signature(app.world_mut(), 100, 100, false, false), idle_sig);
+    assert!(
+        app.world()
+            .non_send::<AudioEngine>()
+            .common_caption()
+            .is_none()
+    );
+    assert_eq!(
+        present_signature(app.world_mut(), 100, 100, false, false),
+        idle_sig
+    );
     assert!(renderer.render_if_needed(app.world_mut(), 100, 100, false, false));
 
     // Enter Playing with a synthetic session, then F4 pauses into Setup, Esc resumes Playing
@@ -2166,10 +2388,13 @@ fn app_state_transitions_render_cache_and_captions_without_assets() {
     assert!(renderer.render_if_needed(app.world_mut(), 100, 100, false, true));
     assert!(!renderer.render_if_needed(app.world_mut(), 150, 120, false, true));
 
-    step_app(&mut app, &AppInput {
-        f4: true,
-        ..AppInput::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            f4: true,
+            ..AppInput::default()
+        },
+    );
     assert_eq!(
         app_screen(&app),
         AppScreen::Setup {
@@ -2179,18 +2404,24 @@ fn app_state_transitions_render_cache_and_captions_without_assets() {
     assert!(renderer.render_if_needed(app.world_mut(), 100, 100, false, true));
 
     // Setup menu navigation updates revision and redraws
-    step_app(&mut app, &AppInput {
-        down: true,
-        ..AppInput::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            down: true,
+            ..AppInput::default()
+        },
+    );
     assert_eq!(app.world().resource::<SetupState>().menu.selected_row, 1);
     assert!(renderer.render_if_needed(app.world_mut(), 100, 100, false, true));
 
     // Esc exits Setup back to Playing
-    step_app(&mut app, &AppInput {
-        escape: true,
-        ..AppInput::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            escape: true,
+            ..AppInput::default()
+        },
+    );
     assert_eq!(app_screen(&app), AppScreen::Playing);
     assert!(renderer.render_if_needed(app.world_mut(), 100, 100, false, true));
 }
@@ -2247,10 +2478,13 @@ fn reference_signature_invalidates_across_replaced_sessions_and_assets_without_a
 fn title_escape_skips_directly_to_browser() {
     let mut app = synthetic_app();
     app_set_screen(&mut app, AppScreen::Title);
-    step_app(&mut app, &AppInput {
-        escape: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            escape: true,
+            ..Default::default()
+        },
+    );
     assert_eq!(app_screen(&app), AppScreen::Browser);
 }
 
@@ -2261,12 +2495,15 @@ fn playing_escape_exits_without_updating_session_on_exit_frame() {
     app_spawn_puzzle(&mut app, 1, preview, 2, true, false, true);
     app_set_screen(&mut app, AppScreen::Playing);
 
-    step_app(&mut app, &AppInput {
-        dt: 1.0,
-        escape: true,
-        f2: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            dt: 1.0,
+            escape: true,
+            f2: true,
+            ..Default::default()
+        },
+    );
 
     assert_eq!(app_screen(&app), AppScreen::Browser);
     let meta = app_meta(&app);
@@ -2279,30 +2516,42 @@ fn title_and_credits_ignore_non_finite_and_negative_dt() {
     let mut app = synthetic_app();
     app_set_screen(&mut app, AppScreen::Title);
     for dt in [f32::NAN, f32::NEG_INFINITY, -5.0] {
-        step_app(&mut app, &AppInput {
-            dt,
-            ..Default::default()
-        });
+        step_app(
+            &mut app,
+            &AppInput {
+                dt,
+                ..Default::default()
+            },
+        );
         assert_eq!(app_screen(&app), AppScreen::Title);
     }
-    step_app(&mut app, &AppInput {
-        dt: 8.1,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            dt: 8.1,
+            ..Default::default()
+        },
+    );
     assert_eq!(app_screen(&app), AppScreen::Browser);
 
     app_set_screen(&mut app, AppScreen::Credits { page: 0 });
     for dt in [f32::NAN, f32::NEG_INFINITY, -5.0] {
-        step_app(&mut app, &AppInput {
-            dt,
-            ..Default::default()
-        });
+        step_app(
+            &mut app,
+            &AppInput {
+                dt,
+                ..Default::default()
+            },
+        );
         assert_eq!(app_screen(&app), AppScreen::Credits { page: 0 });
     }
-    step_app(&mut app, &AppInput {
-        dt: 5.1,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            dt: 5.1,
+            ..Default::default()
+        },
+    );
     assert_eq!(app_screen(&app), AppScreen::Browser);
 }
 
@@ -2316,11 +2565,14 @@ fn enter_on_frame_animation_completes_naturally_does_not_restart_or_spawn_pointe
     assert!(app_active_anim(&mut app).is_some());
     assert!(app_meta(&app).keyboard_pointer.is_none());
 
-    step_app(&mut app, &AppInput {
-        dt: 10.0,
-        enter: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            dt: 10.0,
+            enter: true,
+            ..Default::default()
+        },
+    );
 
     assert_eq!(app_screen(&app), AppScreen::Playing);
     assert!(app_active_anim(&mut app).is_none());
@@ -2331,11 +2583,17 @@ fn enter_on_frame_animation_completes_naturally_does_not_restart_or_spawn_pointe
 fn setup_left_on_save_and_return_does_not_activate_save() {
     let mut app = synthetic_app();
     app_open_setup(&mut app, false);
-    app.world_mut().resource_mut::<SetupState>().menu.selected_row = 6;
-    step_app(&mut app, &AppInput {
-        left: true,
-        ..Default::default()
-    });
+    app.world_mut()
+        .resource_mut::<SetupState>()
+        .menu
+        .selected_row = 6;
+    step_app(
+        &mut app,
+        &AppInput {
+            left: true,
+            ..Default::default()
+        },
+    );
     assert_eq!(
         app_screen(&app),
         AppScreen::Setup {
@@ -2388,12 +2646,19 @@ fn unfinished_puzzle_exit_prompts_confirmation_and_handles_cancel_or_confirm() {
     app_set_screen(&mut app, AppScreen::Playing);
 
     // First Escape asks for confirmation instead of discarding progress.
-    step_app(&mut app, &AppInput {
-        escape: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            escape: true,
+            ..Default::default()
+        },
+    );
     assert_eq!(app_screen(&app), AppScreen::Playing);
-    assert!(app.world().resource::<InGameMenuState>().confirm_exit_puzzle);
+    assert!(
+        app.world()
+            .resource::<InGameMenuState>()
+            .confirm_exit_puzzle
+    );
     assert!(
         app_meta(&app)
             .status_message()
@@ -2401,25 +2666,46 @@ fn unfinished_puzzle_exit_prompts_confirmation_and_handles_cancel_or_confirm() {
     );
 
     // Second Escape cancels the confirmation and resumes playing.
-    step_app(&mut app, &AppInput {
-        escape: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            escape: true,
+            ..Default::default()
+        },
+    );
     assert_eq!(app_screen(&app), AppScreen::Playing);
-    assert!(!app.world().resource::<InGameMenuState>().confirm_exit_puzzle);
+    assert!(
+        !app.world()
+            .resource::<InGameMenuState>()
+            .confirm_exit_puzzle
+    );
 
     // Escape then Enter confirms exiting to Browser.
-    step_app(&mut app, &AppInput {
-        escape: true,
-        ..Default::default()
-    });
-    assert!(app.world().resource::<InGameMenuState>().confirm_exit_puzzle);
-    step_app(&mut app, &AppInput {
-        enter: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            escape: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        app.world()
+            .resource::<InGameMenuState>()
+            .confirm_exit_puzzle
+    );
+    step_app(
+        &mut app,
+        &AppInput {
+            enter: true,
+            ..Default::default()
+        },
+    );
     assert_eq!(app_screen(&app), AppScreen::Browser);
-    assert!(!app.world().resource::<InGameMenuState>().confirm_exit_puzzle);
+    assert!(
+        !app.world()
+            .resource::<InGameMenuState>()
+            .confirm_exit_puzzle
+    );
 }
 
 #[test]
@@ -2435,13 +2721,16 @@ fn in_game_hotkeys_toggle_music_sfx_timer_and_text_messages() {
     let init_timer = prefs_before.timer_on;
     let init_text = prefs_before.text_msg_on;
 
-    step_app(&mut app, &AppInput {
-        f7: true,
-        f8: true,
-        key_t: true,
-        key_m: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            f7: true,
+            f8: true,
+            key_t: true,
+            key_m: true,
+            ..Default::default()
+        },
+    );
 
     let prefs_after = app.world().resource::<GameConfig>().prefs;
     assert_ne!(prefs_after.music_on, init_music);
@@ -2462,14 +2751,27 @@ fn f1_during_solved_animation_does_not_play_hint_cue() {
     app_auto_solve(&mut app);
     assert!(app_meta(&app).solved);
     assert!(app_active_anim(&mut app).is_some());
-    assert!(app.world().non_send::<AudioEngine>().common_caption().is_none());
+    assert!(
+        app.world()
+            .non_send::<AudioEngine>()
+            .common_caption()
+            .is_none()
+    );
 
-    step_app(&mut app, &AppInput {
-        f1: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            f1: true,
+            ..Default::default()
+        },
+    );
 
-    assert!(app.world().non_send::<AudioEngine>().common_caption().is_none());
+    assert!(
+        app.world()
+            .non_send::<AudioEngine>()
+            .common_caption()
+            .is_none()
+    );
 }
 
 #[test]
@@ -2483,7 +2785,10 @@ fn escape_prompts_confirmation_when_all_placed_pieces_are_held_as_group() {
 
     // Place 2 adjacent pieces (0, 1)=1 and (1, 1)=5, then right-click to pick up the entire cluster.
     for (pidx, r, c) in [(1usize, 0usize, 1usize), (5, 1, 1)] {
-        let pos = app_tray_order(&mut app).iter().position(|&p| p == pidx).unwrap();
+        let pos = app_tray_order(&mut app)
+            .iter()
+            .position(|&p| p == pidx)
+            .unwrap();
         app_meta_mut(&mut app).tray_scroll = pos;
         app_click(&mut app, 20, 40);
         let col_w = crate::puzzle::grid_col_widths(4);
@@ -2500,13 +2805,20 @@ fn escape_prompts_confirmation_when_all_placed_pieces_are_held_as_group() {
     assert_eq!(app_held_group_pieces(&mut app).len(), 2);
     assert!(!app_all_placed(&mut app));
 
-    step_app(&mut app, &AppInput {
-        escape: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            escape: true,
+            ..Default::default()
+        },
+    );
 
     assert_eq!(app_screen(&app), AppScreen::Playing);
-    assert!(app.world().resource::<InGameMenuState>().confirm_exit_puzzle);
+    assert!(
+        app.world()
+            .resource::<InGameMenuState>()
+            .confirm_exit_puzzle
+    );
     assert!(
         app_meta(&app)
             .status_message()
@@ -2523,46 +2835,61 @@ fn browser_quit_and_print_buttons_and_hotkeys() {
     // Clicking Print button (index 6) sets browser_status.
     let print_btn = crate::app::BROWSER_BUTTONS[6];
     assert_eq!(print_btn.action, crate::app::BrowserAction::PrintPuzzle);
-    step_app(&mut app, &AppInput {
-        left_pressed: true,
-        pointer_x: print_btn.x + print_btn.w / 2,
-        pointer_y: print_btn.y + print_btn.h / 2,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            left_pressed: true,
+            pointer_x: print_btn.x + print_btn.w / 2,
+            pointer_y: print_btn.y + print_btn.h / 2,
+            ..Default::default()
+        },
+    );
     assert!(app.world().resource::<BrowserState>().status.is_some());
 
     // Pressing P triggers PrintPuzzle as well.
     app.world_mut().resource_mut::<BrowserState>().status = None;
-    step_app(&mut app, &AppInput {
-        key_p: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            key_p: true,
+            ..Default::default()
+        },
+    );
     assert!(app.world().resource::<BrowserState>().status.is_some());
 
     // Clicking Quit button (index 7) requests quit.
     let quit_btn = crate::app::BROWSER_BUTTONS[7];
     assert_eq!(quit_btn.action, crate::app::BrowserAction::QuitGame);
-    step_app(&mut app, &AppInput {
-        left_pressed: true,
-        pointer_x: quit_btn.x + quit_btn.w / 2,
-        pointer_y: quit_btn.y + quit_btn.h / 2,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            left_pressed: true,
+            pointer_x: quit_btn.x + quit_btn.w / 2,
+            pointer_y: quit_btn.y + quit_btn.h / 2,
+            ..Default::default()
+        },
+    );
     assert!(app.world_mut().resource_mut::<ScreenState>().quit_requested);
 
     // Pressing Q or Escape in Browser also sets quit_requested.
     app.world_mut().resource_mut::<ScreenState>().quit_requested = false;
-    step_app(&mut app, &AppInput {
-        key_q: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            key_q: true,
+            ..Default::default()
+        },
+    );
     assert!(app.world_mut().resource_mut::<ScreenState>().quit_requested);
 
     app.world_mut().resource_mut::<ScreenState>().quit_requested = false;
-    step_app(&mut app, &AppInput {
-        escape: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            escape: true,
+            ..Default::default()
+        },
+    );
     assert!(app.world_mut().resource_mut::<ScreenState>().quit_requested);
 }
 
@@ -2638,13 +2965,16 @@ fn wasd_then_mouse_motion_restores_pointer_and_click_target() {
     app_set_screen(&mut app, AppScreen::Playing);
 
     // 1. WASD steers keyboard_pointer away from physical mouse coordinates (150, 120).
-    step_app(&mut app, &AppInput {
-        dt: 0.25,
-        move_x: 1,
-        pointer_x: 150,
-        pointer_y: 120,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            dt: 0.25,
+            move_x: 1,
+            pointer_x: 150,
+            pointer_y: 120,
+            ..Default::default()
+        },
+    );
     let kbd_pos = app_meta(&app).keyboard_pointer.unwrap();
     assert_eq!(
         app_meta(&app).active_pointer(150, 120),
@@ -2652,12 +2982,15 @@ fn wasd_then_mouse_motion_restores_pointer_and_click_target() {
     );
 
     // 2. Physical mouse motion without clicking clears keyboard_pointer so Mickey hand tracks (150, 120).
-    step_app(&mut app, &AppInput {
-        pointer_x: 150,
-        pointer_y: 120,
-        pointer_moved: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            pointer_x: 150,
+            pointer_y: 120,
+            pointer_moved: true,
+            ..Default::default()
+        },
+    );
     assert!(app_meta(&app).keyboard_pointer.is_none());
     assert_eq!(app_meta(&app).active_pointer(150, 120), (150, 120));
 
@@ -2677,45 +3010,63 @@ fn quit_phase_waits_for_active_sfx_with_bounded_fallback() {
     app_set_screen(&mut app, AppScreen::Browser);
 
     // Without active audio sinks, Quit exits immediately.
-    step_app(&mut app, &AppInput {
-        key_q: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            key_q: true,
+            ..Default::default()
+        },
+    );
     assert!(app.world().resource::<ScreenState>().quit_requested);
     assert!(should_exit(&app));
 
     // With an active Rodio sink, Quit enters a noninteractive wait until playback ends or times out.
     app.world_mut().resource_mut::<ScreenState>().quit_requested = false;
-    app.world_mut().resource_mut::<ScreenState>().quit_timer.reset();
+    app.world_mut()
+        .resource_mut::<ScreenState>()
+        .quit_timer
+        .reset();
     let (sink, _queue) = rodio::Sink::new_idle();
     sink.append(rodio::buffer::SamplesBuffer::new(
         1,
         11_025,
         vec![100i16; 4096],
     ));
-    app.world_mut().non_send_mut::<AudioEngine>().sfx_sinks.push(sink);
+    app.world_mut()
+        .non_send_mut::<AudioEngine>()
+        .sfx_sinks
+        .push(sink);
 
-    step_app(&mut app, &AppInput {
-        key_q: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            key_q: true,
+            ..Default::default()
+        },
+    );
     assert!(app.world().resource::<ScreenState>().quit_requested);
     assert!(!should_exit(&app));
 
     // Interactive keys during quitting phase are ignored, while quit_elapsed advances.
-    step_app(&mut app, &AppInput {
-        dt: 0.5,
-        key_p: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            dt: 0.5,
+            key_p: true,
+            ..Default::default()
+        },
+    );
     assert!(app.world().resource::<BrowserState>().status.is_none());
     assert!(!should_exit(&app));
 
     // Bounded fallback exits cleanly once elapsed >= 3.0s even if the sink hasn't drained.
-    step_app(&mut app, &AppInput {
-        dt: 2.6,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            dt: 2.6,
+            ..Default::default()
+        },
+    );
     assert!(should_exit(&app));
 }
 
@@ -2727,7 +3078,11 @@ fn quit_phase_waits_for_active_sfx_with_bounded_fallback() {
 fn browser_renders_original_tbx_sprites_in_vga_and_ega() {
     for ega in [false, true] {
         let mut app = test_browser();
-        app.world_mut().resource_mut::<SetupState>().menu.prefs.video_mode = if ega { 2 } else { 1 };
+        app.world_mut()
+            .resource_mut::<SetupState>()
+            .menu
+            .prefs
+            .video_mode = if ega { 2 } else { 1 };
         app_sync_prefs_from_setup(&mut app);
         let mut renderer = AppRenderer::new();
         {
@@ -2845,12 +3200,15 @@ fn browser_hover_pressed_and_right_sidebar_slot_selection() {
     // Hovering over NextPuzzle changes browser_hover and triggers a re-render.
     let next_btn = BROWSER_BUTTONS[1];
     assert_eq!(next_btn.action, crate::app::BrowserAction::NextPuzzle);
-    step_app(&mut app, &AppInput {
-        pointer_x: next_btn.x + next_btn.w / 2,
-        pointer_y: next_btn.y + next_btn.h / 2,
-        pointer_moved: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            pointer_x: next_btn.x + next_btn.w / 2,
+            pointer_y: next_btn.y + next_btn.h / 2,
+            pointer_moved: true,
+            ..Default::default()
+        },
+    );
     assert_eq!(
         app.world().resource::<BrowserState>().hover,
         Some(crate::app::BrowserTarget::Button(
@@ -2867,23 +3225,29 @@ fn browser_hover_pressed_and_right_sidebar_slot_selection() {
 
     // Clicking right-sidebar slot 5 selects puzzle 5 and sets browser_pressed until release.
     let slot5_y = crate::app::BROWSER_SLOT_Y0 + 4 * crate::app::BROWSER_SLOT_H + 5;
-    step_app(&mut app, &AppInput {
-        pointer_x: 312,
-        pointer_y: slot5_y,
-        left_pressed: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            pointer_x: 312,
+            pointer_y: slot5_y,
+            left_pressed: true,
+            ..Default::default()
+        },
+    );
     assert_eq!(app.world().resource::<BrowserState>().selected_puzzle, 5);
     assert_eq!(
         app.world().resource::<BrowserState>().pressed,
         Some(crate::app::BrowserTarget::PuzzleSlot(5))
     );
-    step_app(&mut app, &AppInput {
-        pointer_x: 312,
-        pointer_y: slot5_y,
-        left_released: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            pointer_x: 312,
+            pointer_y: slot5_y,
+            left_released: true,
+            ..Default::default()
+        },
+    );
     assert!(app.world().resource::<BrowserState>().pressed.is_none());
 }
 
@@ -3039,7 +3403,10 @@ fn toolbox_open_closed_hover_pressed_and_cursor_states() {
     assert_eq!(app_meta(&app).tray_scroll, 1);
 
     // Collapsed toolbox: tab at (2, 2) renders tbx[49], responds to hover/press/release.
-    { let open = app_meta(&app).toolbox_open; app_meta_mut(&mut app).toolbox_open = !open; }
+    {
+        let open = app_meta(&app).toolbox_open;
+        app_meta_mut(&mut app).toolbox_open = !open;
+    }
     assert!(!app_meta(&app).toolbox_open);
     renderer.render_if_needed(app.world_mut(), 200, 100, false, false);
     let closed_idle = renderer.fb.pixels;
@@ -3122,17 +3489,31 @@ fn toolbox_tray_slots_scrolling_removal_and_return() {
         app_meta(&app).toolbox_target_at(20, 192, false, 9),
         Some(crate::puzzle::ToolboxTarget::ScrollDown)
     );
-    assert!(!matches!(app_meta(&app).toolbox_target_at(20, 8, false, 9), Some(crate::puzzle::ToolboxTarget::TraySlot(_))));
-    assert!(!matches!(app_meta(&app).toolbox_target_at(20, 22, false, 9), Some(crate::puzzle::ToolboxTarget::TraySlot(_))));
-    assert!(!matches!(app_meta(&app).toolbox_target_at(20, 192, false, 9), Some(crate::puzzle::ToolboxTarget::TraySlot(_))));
+    assert!(!matches!(
+        app_meta(&app).toolbox_target_at(20, 8, false, 9),
+        Some(crate::puzzle::ToolboxTarget::TraySlot(_))
+    ));
+    assert!(!matches!(
+        app_meta(&app).toolbox_target_at(20, 22, false, 9),
+        Some(crate::puzzle::ToolboxTarget::TraySlot(_))
+    ));
+    assert!(!matches!(
+        app_meta(&app).toolbox_target_at(20, 192, false, 9),
+        Some(crate::puzzle::ToolboxTarget::TraySlot(_))
+    ));
     assert_eq!(app_meta(&app).toolbox_target_at(48, 50, false, 9), None);
     for slot in 0..vis {
         let y = 30 + slot as i32 * slot_h + 2;
-        assert_eq!(app_meta(&app).toolbox_target_at(20, y, false, 9), Some(crate::puzzle::ToolboxTarget::TraySlot(slot)));
+        assert_eq!(
+            app_meta(&app).toolbox_target_at(20, y, false, 9),
+            Some(crate::puzzle::ToolboxTarget::TraySlot(slot))
+        );
     }
 
     // Scroll boundaries, non-interrupting UI click audio, & tray removal + return.
-    app.world_mut().non_send_mut::<AudioEngine>().play_common(crate::audio::CommonSound::ChoosePiece);
+    app.world_mut()
+        .non_send_mut::<AudioEngine>()
+        .play_common(crate::audio::CommonSound::ChoosePiece);
     let caption_before = app.world().non_send::<AudioEngine>().caption_key();
     app_set_screen(&mut app, AppScreen::Playing);
     app_click(&mut app, 20, 22);
@@ -3140,14 +3521,14 @@ fn toolbox_tray_slots_scrolling_removal_and_return() {
     app_click(&mut app, 20, 192);
     assert_eq!(app_meta(&app).tray_scroll, 1);
     app_click(&mut app, 20, 192);
-        assert_eq!(app_meta(&app).tray_scroll, 2);
+    assert_eq!(app_meta(&app).tray_scroll, 2);
     assert_eq!(
         app.world().non_send::<AudioEngine>().caption_key(),
         caption_before,
         "tray scroll UI click must not clear active speech caption"
     );
     app_click(&mut app, 20, 22);
-        assert_eq!(app_meta(&app).tray_scroll, 1);
+    assert_eq!(app_meta(&app).tray_scroll, 1);
 
     let expected_first_after_scroll = app_tray_order(&mut app)[1];
     app_click(&mut app, 20, 32);
@@ -3190,7 +3571,10 @@ fn connected_group_pickup_render_movement_and_tray_return() {
     let p0 = 0usize;
     let p1 = 1usize;
     for (pidx, r, c) in [(p0, 0usize, 0usize), (p1, 0, 1)] {
-        let pos = app_tray_order(&mut app).iter().position(|&p| p == pidx).unwrap();
+        let pos = app_tray_order(&mut app)
+            .iter()
+            .position(|&p| p == pidx)
+            .unwrap();
         app_meta_mut(&mut app).tray_scroll = pos;
         app_click(&mut app, 20, 40);
         let cx = pf_x + col_w[..c].iter().sum::<i32>() + col_w[c] / 2;
@@ -3230,12 +3614,19 @@ fn connected_group_pickup_render_movement_and_tray_return() {
 #[test]
 fn vga_ega_switch_during_unfinished_puzzle_remaps_toolbox_and_border() {
     let mut app = test_browser();
-    app.world_mut().resource_mut::<SetupState>().menu.prefs.video_mode = 1; // VGA
+    app.world_mut()
+        .resource_mut::<SetupState>()
+        .menu
+        .prefs
+        .video_mode = 1; // VGA
     app_sync_prefs_from_setup(&mut app);
     let preview = app.world().resource::<BrowserState>().preview_asset.clone();
     app_spawn_puzzle(&mut app, 1, preview, 2, true, false, false);
     app_set_screen(&mut app, AppScreen::Playing);
-    let pos = app_tray_order(&mut app).iter().position(|&p| p == 0).unwrap();
+    let pos = app_tray_order(&mut app)
+        .iter()
+        .position(|&p| p == 0)
+        .unwrap();
     app_meta_mut(&mut app).tray_scroll = pos;
     app_click(&mut app, 20, 40);
     let piece0 = app_piece_geom(&mut app, 0);
@@ -3249,7 +3640,11 @@ fn vga_ega_switch_during_unfinished_puzzle_remaps_toolbox_and_border() {
     let vga_asset_rev = app_meta(&app).asset_rev;
 
     // Switch to EGA while puzzle is unfinished.
-    app.world_mut().resource_mut::<SetupState>().menu.prefs.video_mode = 2;
+    app.world_mut()
+        .resource_mut::<SetupState>()
+        .menu
+        .prefs
+        .video_mode = 2;
     app_sync_prefs_from_setup(&mut app);
     assert!(app.world().resource::<SetupState>().menu.error.is_none());
     assert_ne!(app_meta(&app).asset_rev, vga_asset_rev);
@@ -3268,9 +3663,10 @@ fn vga_ega_switch_during_unfinished_puzzle_remaps_toolbox_and_border() {
             let sy = icon_49.sub_y as usize + dy as usize;
             let off = sy * icon_49.stride as usize + icon_49.sub_x as usize + dx as usize;
             if icon_49.is_opaque(off) {
-                let expected = renderer
-                    .fb
-                    .color_index(app.world().resource::<StaticAssets>().tbx_ega.palette[icon_49.pixels[off] as usize]);
+                let expected = renderer.fb.color_index(
+                    app.world().resource::<StaticAssets>().tbx_ega.palette
+                        [icon_49.pixels[off] as usize],
+                );
                 assert_eq!(renderer.fb.get_pixel(3 + dx, 2 + dy), expected);
                 return;
             }
@@ -3299,19 +3695,25 @@ fn in_game_menu_opens_closes_and_navigates_keyboard_and_mouse() {
     app_set_screen(&mut app, AppScreen::Playing);
 
     // Click MENU button in open toolbox (20, 8) -> press + release opens menu.
-    step_app(&mut app, &AppInput {
-        pointer_x: 20,
-        pointer_y: 8,
-        left_pressed: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            pointer_x: 20,
+            pointer_y: 8,
+            left_pressed: true,
+            ..Default::default()
+        },
+    );
     assert!(app.world().resource::<InGameMenuState>().open);
-    step_app(&mut app, &AppInput {
-        pointer_x: 20,
-        pointer_y: 8,
-        left_released: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            pointer_x: 20,
+            pointer_y: 8,
+            left_released: true,
+            ..Default::default()
+        },
+    );
     assert!(app.world().resource::<InGameMenuState>().open);
     assert_eq!(app.world().resource::<InGameMenuState>().selected, 0);
 
@@ -3329,26 +3731,35 @@ fn in_game_menu_opens_closes_and_navigates_keyboard_and_mouse() {
     // Down skips disabled Replay (when unsolved) and wraps cleanly.
     // Enabled items when unsolved: 0 OtherPicture, 1 Setup, 2 PieceTray, 4 Quit, 5 Resume.
     for expected in [1, 2, 4, 5, 0] {
-        step_app(&mut app, &AppInput {
-            down: true,
-            ..Default::default()
-        });
+        step_app(
+            &mut app,
+            &AppInput {
+                down: true,
+                ..Default::default()
+            },
+        );
         assert_eq!(app.world().resource::<InGameMenuState>().selected, expected);
     }
-    step_app(&mut app, &AppInput {
-        up: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            up: true,
+            ..Default::default()
+        },
+    );
     assert_eq!(app.world().resource::<InGameMenuState>().selected, 5);
 
     // Press on Resume, drag off before release -> does NOT close menu.
     let (rx, ry, _, _) = crate::app::in_game_menu_row_rect(5);
-    step_app(&mut app, &AppInput {
-        pointer_x: rx + 10,
-        pointer_y: ry + 5,
-        left_pressed: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            pointer_x: rx + 10,
+            pointer_y: ry + 5,
+            left_pressed: true,
+            ..Default::default()
+        },
+    );
     assert_eq!(
         app.world().resource::<InGameMenuState>().pressed,
         Some(crate::app::InGameMenuCommand::Resume)
@@ -3357,43 +3768,58 @@ fn in_game_menu_opens_closes_and_navigates_keyboard_and_mouse() {
         AppRenderer::desired_cursor(app.world_mut(), rx + 10, ry + 5, false),
         Some((63, rx, ry + 5))
     );
-    step_app(&mut app, &AppInput {
-        pointer_x: rx + 10,
-        pointer_y: ry + 40,
-        left_released: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            pointer_x: rx + 10,
+            pointer_y: ry + 40,
+            left_released: true,
+            ..Default::default()
+        },
+    );
     assert!(app.world().resource::<InGameMenuState>().open);
     assert!(app.world().resource::<InGameMenuState>().pressed.is_none());
 
     // Clicking outside menu panel closes it cleanly.
-    step_app(&mut app, &AppInput {
-        pointer_x: 10,
-        pointer_y: 10,
-        left_pressed: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            pointer_x: 10,
+            pointer_y: 10,
+            left_pressed: true,
+            ..Default::default()
+        },
+    );
     assert!(!app.world().resource::<InGameMenuState>().open);
 
     // Re-open and close with Escape; keyboard-to-mouse switching clears keyboard pointer.
     app_open_in_game_menu(&mut app);
-    step_app(&mut app, &AppInput {
-        dt: 0.1,
-        move_x: 1,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            dt: 0.1,
+            move_x: 1,
+            ..Default::default()
+        },
+    );
     assert!(app_meta(&app).keyboard_pointer.is_some());
-    step_app(&mut app, &AppInput {
-        pointer_x: 120,
-        pointer_y: 54,
-        pointer_moved: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            pointer_x: 120,
+            pointer_y: 54,
+            pointer_moved: true,
+            ..Default::default()
+        },
+    );
     assert!(app_meta(&app).keyboard_pointer.is_none());
-    step_app(&mut app, &AppInput {
-        escape: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            escape: true,
+            ..Default::default()
+        },
+    );
     assert!(!app.world().resource::<InGameMenuState>().open);
 
     // Stationary pointer over disabled Replay (row 3) or OtherPicture (row 0)
@@ -3401,26 +3827,35 @@ fn in_game_menu_opens_closes_and_navigates_keyboard_and_mouse() {
     app_open_in_game_menu(&mut app);
     let (r0x, r0y, _, _) = crate::app::in_game_menu_row_rect(0);
     let (r3x, r3y, _, _) = crate::app::in_game_menu_row_rect(3);
-    step_app(&mut app, &AppInput {
-        pointer_x: r3x + 10,
-        pointer_y: r3y + 5,
-        pointer_moved: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            pointer_x: r3x + 10,
+            pointer_y: r3y + 5,
+            pointer_moved: true,
+            ..Default::default()
+        },
+    );
     assert_eq!(app.world().resource::<InGameMenuState>().selected, 0);
-    step_app(&mut app, &AppInput {
-        pointer_x: r0x + 10,
-        pointer_y: r0y + 5,
-        down: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            pointer_x: r0x + 10,
+            pointer_y: r0y + 5,
+            down: true,
+            ..Default::default()
+        },
+    );
     assert_eq!(app.world().resource::<InGameMenuState>().selected, 1);
-    step_app(&mut app, &AppInput {
-        pointer_x: r0x + 10,
-        pointer_y: r0y + 5,
-        enter: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            pointer_x: r0x + 10,
+            pointer_y: r0y + 5,
+            enter: true,
+            ..Default::default()
+        },
+    );
     assert!(matches!(app_screen(&app), AppScreen::Setup { .. }));
     assert!(!app.world().resource::<InGameMenuState>().open);
     app_exit_setup(&mut app, true);
@@ -3428,44 +3863,70 @@ fn in_game_menu_opens_closes_and_navigates_keyboard_and_mouse() {
     // WASD then physical mouse click *without* pointer_moved clears keyboard pointer
     // and hits physical mouse coordinates instead of stale keyboard pointer.
     app_open_in_game_menu(&mut app);
-    step_app(&mut app, &AppInput {
-        dt: 0.1,
-        move_x: 1,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            dt: 0.1,
+            move_x: 1,
+            ..Default::default()
+        },
+    );
     assert!(app_meta(&app).keyboard_pointer.is_some());
     let (r1x, r1y, _, _) = crate::app::in_game_menu_row_rect(1);
-    step_app(&mut app, &AppInput {
-        pointer_x: r1x + 10,
-        pointer_y: r1y + 5,
-        left_pressed: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            pointer_x: r1x + 10,
+            pointer_y: r1y + 5,
+            left_pressed: true,
+            ..Default::default()
+        },
+    );
     assert!(app_meta(&app).keyboard_pointer.is_none());
-    step_app(&mut app, &AppInput {
-        pointer_x: r1x + 10,
-        pointer_y: r1y + 5,
-        left_released: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            pointer_x: r1x + 10,
+            pointer_y: r1y + 5,
+            left_released: true,
+            ..Default::default()
+        },
+    );
     assert!(matches!(app_screen(&app), AppScreen::Setup { .. }));
     app_exit_setup(&mut app, true);
 
     // Menu UI clicks (open, Up/Down, empty-handed PieceTray) must not interrupt active captions/speech.
-    app.world_mut().non_send_mut::<AudioEngine>().play_common(crate::audio::CommonSound::NotDoneYet);
-    { let mut s = AudioStatus::default(); sync_audio_status(app.world().non_send::<AudioEngine>(), &mut s); *app.world_mut().resource_mut::<AudioStatus>() = s; }
+    app.world_mut()
+        .non_send_mut::<AudioEngine>()
+        .play_common(crate::audio::CommonSound::NotDoneYet);
+    {
+        let mut s = AudioStatus::default();
+        sync_audio_status(app.world().non_send::<AudioEngine>(), &mut s);
+        *app.world_mut().resource_mut::<AudioStatus>() = s;
+    }
     let active_caption = app.world().non_send::<AudioEngine>().common_caption();
     assert!(active_caption.is_some());
     app_open_in_game_menu(&mut app);
-        assert_eq!(app.world().non_send::<AudioEngine>().common_caption(), active_caption);
-    step_app(&mut app, &AppInput {
-        down: true,
-        ..Default::default()
-    });
-    assert_eq!(app.world().non_send::<AudioEngine>().common_caption(), active_caption);
-    app_exec_in_game_menu(&mut app, crate::app::InGameMenuCommand::PieceTray,
+    assert_eq!(
+        app.world().non_send::<AudioEngine>().common_caption(),
+        active_caption
     );
-        assert_eq!(app.world().non_send::<AudioEngine>().common_caption(), active_caption);
+    step_app(
+        &mut app,
+        &AppInput {
+            down: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        app.world().non_send::<AudioEngine>().common_caption(),
+        active_caption
+    );
+    app_exec_in_game_menu(&mut app, crate::app::InGameMenuCommand::PieceTray);
+    assert_eq!(
+        app.world().non_send::<AudioEngine>().common_caption(),
+        active_caption
+    );
 }
 
 #[test]
@@ -3484,18 +3945,24 @@ fn in_game_menu_commands_other_picture_setup_tray_replay_and_quit() {
     // 1. Setup from menu preserves active puzzle, held piece, and timer.
     app_open_in_game_menu(&mut app);
     let (sx, sy, _, _) = crate::app::in_game_menu_row_rect(1);
-    step_app(&mut app, &AppInput {
-        pointer_x: sx + 8,
-        pointer_y: sy + 6,
-        left_pressed: true,
-        ..Default::default()
-    });
-    step_app(&mut app, &AppInput {
-        pointer_x: sx + 8,
-        pointer_y: sy + 6,
-        left_released: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            pointer_x: sx + 8,
+            pointer_y: sy + 6,
+            left_pressed: true,
+            ..Default::default()
+        },
+    );
+    step_app(
+        &mut app,
+        &AppInput {
+            pointer_x: sx + 8,
+            pointer_y: sy + 6,
+            left_released: true,
+            ..Default::default()
+        },
+    );
     assert_eq!(
         app_screen(&app),
         AppScreen::Setup {
@@ -3512,26 +3979,34 @@ fn in_game_menu_commands_other_picture_setup_tray_replay_and_quit() {
     // 2. Replay is disabled while unsolved (both menu click and R hotkey).
     app_open_in_game_menu(&mut app);
     let (rx, ry, _, _) = crate::app::in_game_menu_row_rect(3);
-    step_app(&mut app, &AppInput {
-        pointer_x: rx + 8,
-        pointer_y: ry + 6,
-        left_pressed: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            pointer_x: rx + 8,
+            pointer_y: ry + 6,
+            left_pressed: true,
+            ..Default::default()
+        },
+    );
     assert!(app.world().resource::<InGameMenuState>().open);
     assert!(app_active_anim(&mut app).is_none());
     app_close_in_game_menu(&mut app, false);
-    step_app(&mut app, &AppInput {
-        key_r: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            key_r: true,
+            ..Default::default()
+        },
+    );
     assert!(app_active_anim(&mut app).is_none());
 
     // 3. PieceTray returns held single piece when holding one, preserves held connected groups,
     //    and toggles tray when empty-handed.
     let extra = app_tray_order(&mut app).pop().unwrap();
     {
-        let mut q = app.world_mut().query::<(&PieceIdentity, &mut PieceLocation)>();
+        let mut q = app
+            .world_mut()
+            .query::<(&PieceIdentity, &mut PieceLocation)>();
         for (ident, mut loc) in q.iter_mut(app.world_mut()) {
             if ident.index == extra {
                 *loc = PieceLocation::Held {
@@ -3543,8 +4018,7 @@ fn in_game_menu_commands_other_picture_setup_tray_replay_and_quit() {
         }
     }
     let tray_snapshot_before_group = app_tray_order(&mut app);
-    app_exec_in_game_menu(&mut app, crate::app::InGameMenuCommand::PieceTray,
-    );
+    app_exec_in_game_menu(&mut app, crate::app::InGameMenuCommand::PieceTray);
     assert_eq!(app_held_piece(&mut app), held_id);
     assert_eq!(
         app_held_group_pieces(&mut app),
@@ -3554,62 +4028,101 @@ fn in_game_menu_commands_other_picture_setup_tray_replay_and_quit() {
     // Restore single held piece for single-piece PieceTray test.
     {
         let next_order = app_tray_order(&mut app).len();
-        let mut q = app.world_mut().query::<(&PieceIdentity, &mut PieceLocation)>();
+        let mut q = app
+            .world_mut()
+            .query::<(&PieceIdentity, &mut PieceLocation)>();
         for (ident, mut loc) in q.iter_mut(app.world_mut()) {
             if ident.index == extra {
                 *loc = PieceLocation::Tray { order: next_order };
             }
         }
     }
-    app_exec_in_game_menu(&mut app, crate::app::InGameMenuCommand::PieceTray,
-    );
+    app_exec_in_game_menu(&mut app, crate::app::InGameMenuCommand::PieceTray);
     assert!(app_held_piece(&mut app).is_none());
     assert!(app_meta(&app).toolbox_open);
     assert_eq!(app_tray_order(&mut app).first().copied(), held_id);
-    app_exec_in_game_menu(&mut app, crate::app::InGameMenuCommand::PieceTray,
-    );
+    app_exec_in_game_menu(&mut app, crate::app::InGameMenuCommand::PieceTray);
     assert!(!app_meta(&app).toolbox_open);
-    app_exec_in_game_menu(&mut app, crate::app::InGameMenuCommand::PieceTray,
-    );
+    app_exec_in_game_menu(&mut app, crate::app::InGameMenuCommand::PieceTray);
     assert!(app_meta(&app).toolbox_open);
 
     // 4. Other Picture prompts unfinished confirmation; cancel preserves state, confirm returns to Browser.
-    app_exec_in_game_menu(&mut app, crate::app::InGameMenuCommand::OtherPicture,
+    app_exec_in_game_menu(&mut app, crate::app::InGameMenuCommand::OtherPicture);
+    assert!(
+        app.world()
+            .resource::<InGameMenuState>()
+            .confirm_exit_puzzle
     );
-        assert!(app.world().resource::<InGameMenuState>().confirm_exit_puzzle);
-    assert_eq!(app.world().non_send::<AudioEngine>().common_caption(), Some("We're not done yet."));
-    step_app(&mut app, &AppInput {
-        escape: true,
-        ..Default::default()
-    });
-    assert!(!app.world().resource::<InGameMenuState>().confirm_exit_puzzle);
+    assert_eq!(
+        app.world().non_send::<AudioEngine>().common_caption(),
+        Some("We're not done yet.")
+    );
+    step_app(
+        &mut app,
+        &AppInput {
+            escape: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        !app.world()
+            .resource::<InGameMenuState>()
+            .confirm_exit_puzzle
+    );
     assert_eq!(app_screen(&app), AppScreen::Playing);
     assert!(app_is_placed(&mut app, 1));
 
     // 5. Quit from unfinished puzzle prompts confirmation, cancel preserves state, confirm quits.
-    step_app(&mut app, &AppInput {
-        key_q: true,
-        ..Default::default()
-    });
-    assert!(app.world().resource::<InGameMenuState>().confirm_quit_puzzle);
+    step_app(
+        &mut app,
+        &AppInput {
+            key_q: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        app.world()
+            .resource::<InGameMenuState>()
+            .confirm_quit_puzzle
+    );
     assert!(!app.world().resource::<ScreenState>().quit_requested);
-    assert_eq!(app.world().non_send::<AudioEngine>().common_caption(), Some("We're not done yet."));
-    step_app(&mut app, &AppInput {
-        escape: true,
-        ..Default::default()
-    });
-    assert!(!app.world().resource::<InGameMenuState>().confirm_quit_puzzle);
+    assert_eq!(
+        app.world().non_send::<AudioEngine>().common_caption(),
+        Some("We're not done yet.")
+    );
+    step_app(
+        &mut app,
+        &AppInput {
+            escape: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        !app.world()
+            .resource::<InGameMenuState>()
+            .confirm_quit_puzzle
+    );
     assert!(!app.world().resource::<ScreenState>().quit_requested);
     assert!(app_is_placed(&mut app, 1));
 
-    app_exec_in_game_menu(&mut app, crate::app::InGameMenuCommand::Quit,
+    app_exec_in_game_menu(&mut app, crate::app::InGameMenuCommand::Quit);
+    assert!(
+        app.world()
+            .resource::<InGameMenuState>()
+            .confirm_quit_puzzle
     );
-    assert!(app.world().resource::<InGameMenuState>().confirm_quit_puzzle);
-    step_app(&mut app, &AppInput {
-        enter: true,
-        ..Default::default()
-    });
-    assert!(!app.world().resource::<InGameMenuState>().confirm_quit_puzzle);
+    step_app(
+        &mut app,
+        &AppInput {
+            enter: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        !app.world()
+            .resource::<InGameMenuState>()
+            .confirm_quit_puzzle
+    );
     assert!(app.world().resource::<ScreenState>().quit_requested);
 }
 
@@ -3620,51 +4133,84 @@ fn in_game_solved_replay_and_quit_behavior() {
     app_spawn_puzzle(&mut app, 1, preview, 2, true, false, true);
     app_set_screen(&mut app, AppScreen::Playing);
     app_auto_solve(&mut app);
-    let anims: Vec<Entity> = { let w = app.world_mut(); w.query_filtered::<Entity, With<AnimationState>>().iter(w).collect() };
+    let anims: Vec<Entity> = {
+        let w = app.world_mut();
+        w.query_filtered::<Entity, With<AnimationState>>()
+            .iter(w)
+            .collect()
+    };
     for e in anims {
         app.world_mut().despawn(e);
     }
 
     // PieceTray is disabled when solved; Replay is enabled.
-    assert!(!crate::ecs::systems::menu::is_menu_command_enabled(crate::app::InGameMenuCommand::PieceTray, app_meta(&app).solved));
-    assert!(crate::ecs::systems::menu::is_menu_command_enabled(crate::app::InGameMenuCommand::Replay, app_meta(&app).solved));
+    assert!(!crate::ecs::systems::menu::is_menu_command_enabled(
+        crate::app::InGameMenuCommand::PieceTray,
+        app_meta(&app).solved
+    ));
+    assert!(crate::ecs::systems::menu::is_menu_command_enabled(
+        crate::app::InGameMenuCommand::Replay,
+        app_meta(&app).solved
+    ));
 
     // Clicking top-left menu hotspot when solved opens the command menu.
-    step_app(&mut app, &AppInput {
-        pointer_x: 5,
-        pointer_y: 5,
-        left_pressed: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            pointer_x: 5,
+            pointer_y: 5,
+            left_pressed: true,
+            ..Default::default()
+        },
+    );
     assert!(app.world().resource::<InGameMenuState>().open);
 
     // Replay starts animation and plays SeeWhatHappens ("Let's see what happens.").
-    app_exec_in_game_menu(&mut app, crate::app::InGameMenuCommand::Replay,
-    );
-        assert!(!app.world().resource::<InGameMenuState>().open);
+    app_exec_in_game_menu(&mut app, crate::app::InGameMenuCommand::Replay);
+    assert!(!app.world().resource::<InGameMenuState>().open);
     assert!(app_active_anim(&mut app).is_some());
-    assert_eq!(app.world().non_send::<AudioEngine>().common_caption(), Some("Let's see what happens."));
+    assert_eq!(
+        app.world().non_send::<AudioEngine>().common_caption(),
+        Some("Let's see what happens.")
+    );
 
     // Repeated R hotkey restarts cleanly.
-    step_app(&mut app, &AppInput {
-        key_r: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            key_r: true,
+            ..Default::default()
+        },
+    );
     assert!(app_active_anim(&mut app).is_some());
 
     // Quit when solved asks confirmation WITHOUT playing "We're not done yet."
     app.world_mut().non_send_mut::<AudioEngine>().stop_all();
-    { let mut s = AudioStatus::default(); sync_audio_status(app.world().non_send::<AudioEngine>(), &mut s); *app.world_mut().resource_mut::<AudioStatus>() = s; }
-    step_app(&mut app, &AppInput {
-        key_q: true,
-        ..Default::default()
-    });
-    assert!(app.world().resource::<InGameMenuState>().confirm_quit_puzzle);
+    {
+        let mut s = AudioStatus::default();
+        sync_audio_status(app.world().non_send::<AudioEngine>(), &mut s);
+        *app.world_mut().resource_mut::<AudioStatus>() = s;
+    }
+    step_app(
+        &mut app,
+        &AppInput {
+            key_q: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        app.world()
+            .resource::<InGameMenuState>()
+            .confirm_quit_puzzle
+    );
     assert_eq!(app.world().non_send::<AudioEngine>().common_caption(), None);
-    step_app(&mut app, &AppInput {
-        left_pressed: true,
-        ..Default::default()
-    });
+    step_app(
+        &mut app,
+        &AppInput {
+            left_pressed: true,
+            ..Default::default()
+        },
+    );
     assert!(app.world().resource::<ScreenState>().quit_requested);
 }
 
@@ -3676,8 +4222,12 @@ fn in_game_solved_replay_and_quit_behavior() {
 fn in_game_menu_renders_original_tbx_sprites_in_vga_and_ega() {
     let mut app = build_game_app(test_game_dir(), false).unwrap();
     app_set_screen(&mut app, AppScreen::Browser);
-    app.world_mut().resource_mut::<BrowserState>().selected_puzzle = 1;
-    app.world_mut().resource_mut::<BrowserState>().selected_grid_dim = 2;
+    app.world_mut()
+        .resource_mut::<BrowserState>()
+        .selected_puzzle = 1;
+    app.world_mut()
+        .resource_mut::<BrowserState>()
+        .selected_grid_dim = 2;
     app_start_selected_puzzle(&mut app);
 
     let mut renderer = AppRenderer::new();
@@ -3699,7 +4249,11 @@ fn in_game_menu_renders_original_tbx_sprites_in_vga_and_ega() {
     // Switch to EGA while menu is open -> Setup closes menu cleanly, then re-open in EGA.
     app_open_setup(&mut app, true);
     assert!(!app.world().resource::<InGameMenuState>().open);
-    app.world_mut().resource_mut::<SetupState>().menu.prefs.video_mode = 2;
+    app.world_mut()
+        .resource_mut::<SetupState>()
+        .menu
+        .prefs
+        .video_mode = 2;
     app_exit_setup(&mut app, true);
     app_open_in_game_menu(&mut app);
     assert!(renderer.render_if_needed(app.world_mut(), 120, 54, false, false));
@@ -3744,9 +4298,12 @@ fn composite_gpu_layers_sw(
         }
     };
 
-    app_renderer
-        .puzzle_renderer
-        .render_board_layer_rgba(app.world_mut(), &tbx, picture_guide, &mut out);
+    app_renderer.puzzle_renderer.render_board_layer_rgba(
+        app.world_mut(),
+        &tbx,
+        picture_guide,
+        &mut out,
+    );
 
     if let Some((_, rem)) = app_hint_piece(app) {
         let mut hint_buf = Vec::new();
@@ -3781,11 +4338,12 @@ fn composite_gpu_layers_sw(
 
     if let Some(pidx) = app_held_piece(app) {
         let mut held_buf = Vec::new();
-        if let Some((rx, ry, hw, hh)) =
-            app_renderer
-                .puzzle_renderer
-                .render_held_group_layer_rgba(app.world_mut(), px, py, &mut held_buf)
-        {
+        if let Some((rx, ry, hw, hh)) = app_renderer.puzzle_renderer.render_held_group_layer_rgba(
+            app.world_mut(),
+            px,
+            py,
+            &mut held_buf,
+        ) {
             let anchor = app_piece_geom(app, pidx);
             let ax = px - anchor.base_w / 2;
             let ay = py - anchor.base_h / 2;
@@ -3798,9 +4356,12 @@ fn composite_gpu_layers_sw(
         blit_layer(&mut out, &overlay_buf, 0, 0, SCREEN_W, SCREEN_H);
     }
 
-    if let Some((sprite_idx, cx, cy)) = AppRenderer::desired_cursor(app.world_mut(), mx, my, false) {
+    if let Some((sprite_idx, cx, cy)) = AppRenderer::desired_cursor(app.world_mut(), mx, my, false)
+    {
         let mut cur_buf = Vec::new();
-        if let Some((cw, ch)) = AppRenderer::render_cursor_rgba(app.world(), sprite_idx, &mut cur_buf) {
+        if let Some((cw, ch)) =
+            AppRenderer::render_cursor_rgba(app.world(), sprite_idx, &mut cur_buf)
+        {
             blit_layer(&mut out, &cur_buf, cx, cy, cw, ch);
         }
     }
@@ -3816,10 +4377,18 @@ fn composite_gpu_layers_sw(
 fn gpu_layer_composition_matches_software_renderer_pixel_for_pixel() {
     for video_mode in [0u16, 2u16] {
         let mut app = build_game_app(test_game_dir(), false).unwrap();
-        app.world_mut().resource_mut::<SetupState>().menu.prefs.video_mode = video_mode;
+        app.world_mut()
+            .resource_mut::<SetupState>()
+            .menu
+            .prefs
+            .video_mode = video_mode;
         app_exit_setup(&mut app, false);
-        app.world_mut().resource_mut::<BrowserState>().selected_puzzle = 1;
-        app.world_mut().resource_mut::<BrowserState>().selected_grid_dim = 4;
+        app.world_mut()
+            .resource_mut::<BrowserState>()
+            .selected_puzzle = 1;
+        app.world_mut()
+            .resource_mut::<BrowserState>()
+            .selected_grid_dim = 4;
         app_start_selected_puzzle(&mut app);
 
         let mut ref_renderer = AppRenderer::new();
@@ -3831,7 +4400,10 @@ fn gpu_layer_composition_matches_software_renderer_pixel_for_pixel() {
         let pf_x = app_meta(&app).playfield_x();
         let pf_y = app_meta(&app).playfield_y();
         for (pidx, r, c) in [(0usize, 0usize, 0usize), (1usize, 0, 1)] {
-            let pos = app_tray_order(&mut app).iter().position(|&p| p == pidx).unwrap();
+            let pos = app_tray_order(&mut app)
+                .iter()
+                .position(|&p| p == pidx)
+                .unwrap();
             app_meta_mut(&mut app).tray_scroll = pos;
             app_click(&mut app, 20, 40);
             let cx = pf_x + col_w[..c].iter().sum::<i32>() + col_w[c] / 2;
@@ -3844,7 +4416,8 @@ fn gpu_layer_composition_matches_software_renderer_pixel_for_pixel() {
         for guide in [false, true] {
             for (mx, my) in [(160, 100), (24, 50)] {
                 assert!(ref_renderer.render_if_needed(app.world_mut(), mx, my, false, guide));
-                let composited = composite_gpu_layers_sw(&mut app, &mut layer_renderer, mx, my, guide);
+                let composited =
+                    composite_gpu_layers_sw(&mut app, &mut layer_renderer, mx, my, guide);
                 if composited != ref_renderer.rgba_buf {
                     let diff_idx = composited
                         .as_chunks::<4>()
@@ -3876,7 +4449,8 @@ fn gpu_layer_composition_matches_software_renderer_pixel_for_pixel() {
         for guide in [false, true] {
             for (mx, my) in [(150, 95), (38, 80)] {
                 ref_renderer.render_if_needed(app.world_mut(), mx, my, false, guide);
-                let composited = composite_gpu_layers_sw(&mut app, &mut layer_renderer, mx, my, guide);
+                let composited =
+                    composite_gpu_layers_sw(&mut app, &mut layer_renderer, mx, my, guide);
                 if composited != ref_renderer.rgba_buf {
                     let diff_idx = composited
                         .as_chunks::<4>()
@@ -3908,8 +4482,12 @@ fn touch_input_drives_puzzle_drag_placement_tray_and_menus() {
 
     let mut app = build_game_app(test_game_dir(), false).unwrap();
     app_set_screen(&mut app, AppScreen::Browser);
-    app.world_mut().resource_mut::<BrowserState>().selected_puzzle = 1;
-    app.world_mut().resource_mut::<BrowserState>().selected_grid_dim = 2;
+    app.world_mut()
+        .resource_mut::<BrowserState>()
+        .selected_puzzle = 1;
+    app.world_mut()
+        .resource_mut::<BrowserState>()
+        .selected_grid_dim = 2;
     app_start_selected_puzzle(&mut app);
 
     let tf = ViewportTransform::new(960.0, 720.0, 1.5, true);
@@ -4161,22 +4739,52 @@ fn bevy_state_time_and_ecs_invariants_without_assets() {
     app_set_screen(&mut app, AppScreen::Playing);
 
     // 1. Time<Virtual> advances in Playing, pauses in InGameMenu and Setup.
-    step_app(&mut app, &AppInput { dt: 0.5, ..Default::default() });
+    step_app(
+        &mut app,
+        &AppInput {
+            dt: 0.5,
+            ..Default::default()
+        },
+    );
     assert!(!app.world().resource::<Time<Virtual>>().is_paused());
     assert!((app_meta(&app).elapsed_secs - 0.5).abs() < 1e-6);
 
     app_open_in_game_menu(&mut app);
-    step_app(&mut app, &AppInput { dt: 0.5, ..Default::default() });
+    step_app(
+        &mut app,
+        &AppInput {
+            dt: 0.5,
+            ..Default::default()
+        },
+    );
     assert!(app.world().resource::<Time<Virtual>>().is_paused());
     assert!((app_meta(&app).elapsed_secs - 0.5).abs() < 1e-6);
     app_close_in_game_menu(&mut app, false);
 
-    step_app(&mut app, &AppInput { f4: true, dt: 0.5, ..Default::default() });
-    assert!(matches!(app_screen(&app), AppScreen::Setup { return_to_playing: true }));
+    step_app(
+        &mut app,
+        &AppInput {
+            f4: true,
+            dt: 0.5,
+            ..Default::default()
+        },
+    );
+    assert!(matches!(
+        app_screen(&app),
+        AppScreen::Setup {
+            return_to_playing: true
+        }
+    ));
     assert!(app.world().resource::<Time<Virtual>>().is_paused());
     assert!((app_meta(&app).elapsed_secs - 0.5).abs() < 1e-6);
 
-    step_app(&mut app, &AppInput { escape: true, ..Default::default() });
+    step_app(
+        &mut app,
+        &AppInput {
+            escape: true,
+            ..Default::default()
+        },
+    );
     assert_eq!(app_screen(&app), AppScreen::Playing);
     assert!(!app.world().resource::<Time<Virtual>>().is_paused());
 

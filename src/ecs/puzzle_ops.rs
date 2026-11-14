@@ -36,6 +36,9 @@ pub fn render_full_picture(asset: &PuzzleAsset) -> Box<Framebuffer> {
     fb
 }
 
+pub type GridPolyline = Vec<(i32, i32)>;
+pub type CutPiecesResult = (Vec<CutPieceData>, Vec<GridPolyline>, Vec<GridPolyline>);
+
 /// Cuts the `270 x 196` puzzle picture into `dim x dim` interlocking (or straight) pieces (`FUN_1e59_011c`).
 pub fn cut_pieces_data(
     puzzle_num: usize,
@@ -43,7 +46,7 @@ pub fn cut_pieces_data(
     full_picture_fb: &Framebuffer,
     grid_dim: usize,
     curved_edges: bool,
-) -> (Vec<CutPieceData>, Vec<Vec<(i32, i32)>>, Vec<Vec<(i32, i32)>>) {
+) -> CutPiecesResult {
     if grid_dim == 1 {
         return (cut_preset_pieces_data(asset), Vec::new(), Vec::new());
     }
@@ -294,14 +297,8 @@ fn cut_preset_pieces_data(asset: &PuzzleAsset) -> Vec<CutPieceData> {
                 continue;
             };
             let flags = flags & 3;
-            let (x, y, w, h) = compute_frame_bounds(
-                asset,
-                frame_idx,
-                i32::from(dx),
-                i32::from(dy),
-                flags,
-                0,
-            );
+            let (x, y, w, h) =
+                compute_frame_bounds(asset, frame_idx, i32::from(dx), i32::from(dy), flags, 0);
             let (left, top) = (x.max(2), y.max(2));
             let (width, height) = (
                 ((x + w).min(272) - left).max(0),
@@ -678,7 +675,7 @@ pub fn can_place_piece_at<'a>(
 }
 
 /// Computes screen-space pixel offsets `(piece_index, dx, dy)` for all held pieces relative to the anchor piece.
-pub fn held_group_anchor_cell<'a>(
+pub fn held_group_anchor_cell(
     meta: &PuzzleMeta,
     pointer_x: i32,
     pointer_y: i32,
@@ -710,7 +707,7 @@ pub fn held_group_anchor_cell<'a>(
     dest_anchor.or(meta.held_group_origin_cell)
 }
 
-pub fn held_group_offsets_at<'a>(
+pub fn held_group_offsets_at(
     meta: &PuzzleMeta,
     pointer_x: i32,
     pointer_y: i32,

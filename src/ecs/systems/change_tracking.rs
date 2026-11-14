@@ -56,15 +56,14 @@ pub fn track_render_changes_system(
     for (ident, loc) in piece_q.iter() {
         match *loc {
             PieceLocation::Board { row, col } => {
-                let v = (((ident.index as u64 + 1) << 16)
-                    | ((row as u64 + 1) << 8)
-                    | (col as u64 + 1))
-                    ^ 0x9e37_79b9_7f4a_7c15;
+                let v =
+                    (((ident.index as u64 + 1) << 16) | ((row as u64 + 1) << 8) | (col as u64 + 1))
+                        ^ 0x9e37_79b9_7f4a_7c15;
                 board_hash ^= v.wrapping_mul(0x1000_0000_01b3);
             }
             PieceLocation::Tray { order } => {
-                let v = (((ident.index as u64 + 1) << 16) | (order as u64 + 1))
-                    ^ 0x9e37_79b9_7f4a_7c15;
+                let v =
+                    (((ident.index as u64 + 1) << 16) | (order as u64 + 1)) ^ 0x9e37_79b9_7f4a_7c15;
                 tray_hash ^= v.wrapping_mul(0x1000_0000_01b3);
             }
             PieceLocation::Held { .. } => {}

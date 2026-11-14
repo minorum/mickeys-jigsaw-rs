@@ -33,9 +33,7 @@ use crate::ecs::systems::browser::spawn_puzzle_session;
 use crate::ecs::systems::menu::move_keyboard_pointer_meta;
 use crate::ecs::systems::puzzle_input::cancel_pointer_drag;
 use crate::ecs::systems::setup::replace_scene_asset_ecs;
-use crate::graphics::{
-    Framebuffer, SCENE_OFFSET_X, render_scene_frame, render_scene_view,
-};
+use crate::graphics::{Framebuffer, SCENE_OFFSET_X, render_scene_frame, render_scene_view};
 use crate::puzzle_render::{PuzzleRenderer, puzzle_present_key};
 use crate::setup::SetupMenu;
 
@@ -177,7 +175,10 @@ impl EcsPuzzleHarness {
     }
 
     fn audio_mut(&mut self) -> &mut AudioEngine {
-        self.app.world_mut().non_send_mut::<AudioEngine>().into_inner()
+        self.app
+            .world_mut()
+            .non_send_mut::<AudioEngine>()
+            .into_inner()
     }
 
     fn sync_audio_status(&mut self) {
@@ -328,7 +329,9 @@ impl EcsPuzzleHarness {
             .query::<(&PieceIdentity, &PieceLocation)>()
             .iter(self.world())
             .find_map(|(id, loc)| match *loc {
-                PieceLocation::Held { is_anchor: true, .. } => Some(id.index),
+                PieceLocation::Held {
+                    is_anchor: true, ..
+                } => Some(id.index),
                 _ => None,
             })
     }
@@ -425,7 +428,8 @@ impl EcsPuzzleHarness {
     }
 
     fn set_active_anim(&mut self, anim: Option<AnimationState>) {
-        let existing: Vec<Entity> = self.world_mut()
+        let existing: Vec<Entity> = self
+            .world_mut()
             .query_filtered::<Entity, With<AnimationState>>()
             .iter(self.world())
             .collect();
@@ -590,7 +594,12 @@ impl EcsPuzzleHarness {
             .run_system_once(
                 move |mut commands: Commands,
                       mut active_puzzle: ResMut<ActivePuzzle>,
-                      mut piece_q: Query<(Entity, &PieceIdentity, &mut PieceGeometry, &mut PieceSprite)>,
+                      mut piece_q: Query<(
+                    Entity,
+                    &PieceIdentity,
+                    &mut PieceGeometry,
+                    &mut PieceSprite,
+                )>,
                       hotspot_q: Query<Entity, With<SceneHotspot>>,
                       anim_q: Query<Entity, With<AnimationState>>| {
                     let Some(meta) = &mut active_puzzle.0 else {
@@ -634,12 +643,7 @@ impl EcsPuzzleHarness {
         renderer.render(self.world_mut(), fb, tbx, font, mx, my);
     }
 
-    fn present_key(
-        &mut self,
-        picture_guide: bool,
-        mx: i32,
-        my: i32,
-    ) -> PuzzlePresentKey {
+    fn present_key(&mut self, picture_guide: bool, mx: i32, my: i32) -> PuzzlePresentKey {
         puzzle_present_key(self.world_mut(), mx, my, picture_guide).unwrap()
     }
 }
@@ -826,10 +830,7 @@ fn robot_hotspot_repeats_its_native_sequence() {
         let delay = session.active_anim().unwrap().frame_delay_secs;
         session.update(delay);
     }
-    assert_eq!(
-        session.active_anim().map(|a| a.cur_frame),
-        Some(start)
-    );
+    assert_eq!(session.active_anim().map(|a| a.cur_frame), Some(start));
 }
 
 #[cfg_attr(
@@ -929,10 +930,7 @@ fn original_preset_pieces_can_be_placed_in_both_video_modes() {
                     session.handle_pointer_press(x, y);
                     session.handle_pointer_release(x, y);
                 }
-                assert!(
-                    session.is_placed(held),
-                    "P{num:02} ega={ega} piece={held}"
-                );
+                assert!(session.is_placed(held), "P{num:02} ega={ega} piece={held}");
             }
             assert!(session.meta().solved);
         }
@@ -1405,13 +1403,7 @@ fn supplied_repeated_effects_survive_frames_and_cancel() {
             })
             .unwrap();
         session.trigger_frame_side_effects(replacement);
-        assert!(
-            session
-                .active_anim()
-                .unwrap()
-                .looping_sound
-                .is_none()
-        );
+        assert!(session.active_anim().unwrap().looping_sound.is_none());
         session.on_puzzle_completed();
         session.handle_click(160, 100);
         assert!(session.active_anim().is_none());
@@ -1511,7 +1503,11 @@ fn solved_clicks_select_complete_character_groups() {
         session.handle_click(display_x, y);
         assert_eq!(session.screen(), AppScreen::Playing);
         let selected = session.active_anim().unwrap().seq_idx;
-        assert_eq!(session.meta().asset.sequences[selected].name, expected, "{x},{y}");
+        assert_eq!(
+            session.meta().asset.sequences[selected].name,
+            expected,
+            "{x},{y}"
+        );
     }
 }
 
@@ -1554,7 +1550,8 @@ fn all_solved_hotspot_centers_select_and_complete_their_animation() {
             let mut session = EcsPuzzleHarness::new(id, asset, 2, false, false, false, audio);
             session.meta_mut().solved = true;
             let header = session.meta().asset.sequences[1].header_idx;
-            let SceneRecord::SequenceHeader { hotspots, .. } = &session.meta().asset.records[header]
+            let SceneRecord::SequenceHeader { hotspots, .. } =
+                &session.meta().asset.records[header]
             else {
                 panic!("Missing FILM header");
             };
@@ -1754,7 +1751,10 @@ fn replace_scene_asset_preserves_solved_and_partial_state() {
         .iter(session.world())
         .find_map(|(e, id)| (id.index == held).then_some(e))
         .unwrap();
-    *session.world_mut().get_mut::<PieceLocation>(held_e).unwrap() = PieceLocation::Held {
+    *session
+        .world_mut()
+        .get_mut::<PieceLocation>(held_e)
+        .unwrap() = PieceLocation::Held {
         is_anchor: true,
         group_offset: (0, 0),
         group_order: 0,
@@ -1807,7 +1807,10 @@ fn blend_picture_guide_matches_reference_with_placed_held_and_clipped_pieces() {
             .iter(session.world())
             .find_map(|(e, id)| (id.index == 1).then_some(e))
             .unwrap();
-        *session.world_mut().get_mut::<PieceLocation>(held_e).unwrap() = PieceLocation::Held {
+        *session
+            .world_mut()
+            .get_mut::<PieceLocation>(held_e)
+            .unwrap() = PieceLocation::Held {
             is_anchor: true,
             group_offset: (0, 0),
             group_order: 0,
@@ -1874,8 +1877,10 @@ fn blend_picture_guide_matches_reference_with_placed_held_and_clipped_pieces() {
                     }
 
                     let held_here = {
-                        let hx = mx - held_geom.base_w / 2 + held_geom.target_x - held_geom.base_x - pfx;
-                        let hy = my - held_geom.base_h / 2 + held_geom.target_y - held_geom.base_y - pfy;
+                        let hx =
+                            mx - held_geom.base_w / 2 + held_geom.target_x - held_geom.base_x - pfx;
+                        let hy =
+                            my - held_geom.base_h / 2 + held_geom.target_y - held_geom.base_y - pfy;
                         let dx = px - hx;
                         let dy = py - hy;
                         if !(0..i32::from(held_sprite.width)).contains(&dx)
@@ -2767,7 +2772,10 @@ fn toolbox_cache_and_guide_match_uncached_render_across_interactions() {
         .iter(session.world())
         .find_map(|(e, id)| (id.index == 3).then_some(e))
         .unwrap();
-    *session.world_mut().get_mut::<PieceLocation>(held_e).unwrap() = PieceLocation::Held {
+    *session
+        .world_mut()
+        .get_mut::<PieceLocation>(held_e)
+        .unwrap() = PieceLocation::Held {
         is_anchor: true,
         group_offset: (0, 0),
         group_order: 0,
@@ -2877,7 +2885,10 @@ fn hint_targets_first_visible_tray_piece_when_scrolled() {
         .iter(session.world())
         .find_map(|(e, id)| (id.index == held).then_some(e))
         .unwrap();
-    *session.world_mut().get_mut::<PieceLocation>(held_e).unwrap() = PieceLocation::Held {
+    *session
+        .world_mut()
+        .get_mut::<PieceLocation>(held_e)
+        .unwrap() = PieceLocation::Held {
         is_anchor: true,
         group_offset: (0, 0),
         group_order: 0,
@@ -3045,7 +3056,10 @@ fn completion_time_message_formatted_when_timer_enabled() {
         0.0,
     );
     assert!(session.meta().solved);
-    assert_eq!(session.meta().status_message(), Some("Your time was 1:01:01"));
+    assert_eq!(
+        session.meta().status_message(),
+        Some("Your time was 1:01:01")
+    );
 }
 
 #[test]

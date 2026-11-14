@@ -212,8 +212,12 @@ pub fn in_game_menu_contains(mx: i32, my: i32) -> bool {
 pub enum AppScreen {
     #[default]
     Title,
-    Credits { page: usize },
-    Setup { return_to_playing: bool },
+    Credits {
+        page: usize,
+    },
+    Setup {
+        return_to_playing: bool,
+    },
     Browser,
     Playing,
 }
@@ -329,11 +333,10 @@ pub fn build_game_app(game_dir: PathBuf, start_in_setup: bool) -> Result<App, St
     let tbx = ToolboxAsset::load(&game_dir.join("MJP.TBX"), 0)?;
     let tbx_ega = ToolboxAsset::load(&game_dir.join("MJP.TBX"), 1)?;
     let title_images = load_ilbm_container(&game_dir.join("MJP.TTL"))?;
-    let mut credit_images =
-        load_ilbm_container(&game_dir.join("MJP.CRD")).unwrap_or_else(|err| {
-            eprintln!("Credits unavailable: {err}");
-            Vec::new()
-        });
+    let mut credit_images = load_ilbm_container(&game_dir.join("MJP.CRD")).unwrap_or_else(|err| {
+        eprintln!("Credits unavailable: {err}");
+        Vec::new()
+    });
     credit_images.retain(|img| img.n_planes == 8);
 
     let cfg_path = game_dir.join("mjp_config.pre");
@@ -656,7 +659,11 @@ impl AppRenderer {
                 } else if menu.open {
                     62
                 } else {
-                    let has_anim = world.query::<&AnimationState>().iter(world).next().is_some();
+                    let has_anim = world
+                        .query::<&AnimationState>()
+                        .iter(world)
+                        .next()
+                        .is_some();
                     let is_holding = world
                         .query::<&PieceLocation>()
                         .iter(world)
@@ -684,7 +691,11 @@ impl AppRenderer {
             AppScreen::Browser if world.resource::<BrowserState>().pressed.is_some() => 63,
             _ => 62,
         };
-        world.resource::<StaticAssets>().tbx.sprites.get(sprite_idx)?;
+        world
+            .resource::<StaticAssets>()
+            .tbx
+            .sprites
+            .get(sprite_idx)?;
         let (hx, hy) = Self::cursor_hotspot(sprite_idx);
         Some((sprite_idx, px + hx, py + hy))
     }
@@ -793,12 +804,8 @@ impl AppRenderer {
                 .as_ref()
                 .map(|m| m.active_pointer(mx, my));
             if let Some((px, py)) = pointer {
-                self.puzzle_renderer.blend_picture_guide(
-                    world,
-                    &mut self.base_rgba_buf,
-                    px,
-                    py,
-                );
+                self.puzzle_renderer
+                    .blend_picture_guide(world, &mut self.base_rgba_buf, px, py);
             }
         }
         self.last_present_sig = sig;

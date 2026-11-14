@@ -17,6 +17,8 @@ use crate::puzzle::{
     dissolve_progress,
 };
 
+type HeldRenderPiece = (usize, bool, (i32, i32), PieceGeometry, Sprite8061);
+
 #[derive(Clone, Copy, Debug, Default)]
 struct UiColors {
     white: u8,
@@ -110,11 +112,7 @@ pub fn puzzle_present_key(
     mouse_y: i32,
     picture_guide: bool,
 ) -> Option<PuzzlePresentKey> {
-    let anim = world
-        .query::<&AnimationState>()
-        .iter(world)
-        .next()
-        .cloned();
+    let anim = world.query::<&AnimationState>().iter(world).next().cloned();
     let tray_len = world
         .query::<&PieceLocation>()
         .iter(world)
@@ -124,7 +122,14 @@ pub fn puzzle_present_key(
         .query::<(&PieceIdentity, &PieceLocation)>()
         .iter(world)
         .find_map(|(ident, loc)| {
-            matches!(*loc, PieceLocation::Held { is_anchor: true, .. }).then_some(ident.index)
+            matches!(
+                *loc,
+                PieceLocation::Held {
+                    is_anchor: true,
+                    ..
+                }
+            )
+            .then_some(ident.index)
         });
 
     let meta = world.resource::<ActivePuzzle>().0.as_ref()?;
@@ -430,7 +435,11 @@ impl PuzzleRenderer {
         pointer_y: i32,
     ) {
         assert_eq!(rgba.len(), 320 * 200 * 4);
-        let has_anim = world.query::<&AnimationState>().iter(world).next().is_some();
+        let has_anim = world
+            .query::<&AnimationState>()
+            .iter(world)
+            .next()
+            .is_some();
         let board_rev = world.resource::<RenderVersions>().board_rev;
         let (session_id, asset_rev, pfx, pfy, bg_rgba) = {
             let Some(meta) = world.resource::<ActivePuzzle>().0.as_ref() else {
@@ -457,7 +466,7 @@ impl PuzzleRenderer {
         };
         self.ensure_placed_mask(mask_key, world);
 
-        let held_list: Vec<(usize, bool, (i32, i32), PieceGeometry, Sprite8061)> = world
+        let held_list: Vec<HeldRenderPiece> = world
             .query::<(&PieceIdentity, &PieceGeometry, &PieceSprite, &PieceLocation)>()
             .iter(world)
             .filter_map(|(ident, geom, spr, loc)| match *loc {
@@ -465,7 +474,13 @@ impl PuzzleRenderer {
                     is_anchor,
                     group_offset,
                     ..
-                } => Some((ident.index, is_anchor, group_offset, *geom, spr.sprite.clone())),
+                } => Some((
+                    ident.index,
+                    is_anchor,
+                    group_offset,
+                    *geom,
+                    spr.sprite.clone(),
+                )),
                 _ => None,
             })
             .collect();
@@ -667,7 +682,7 @@ impl PuzzleRenderer {
             fb.draw_text_shadowed(font, status, pfx + 6, 186, colors.black, colors.yellow);
         }
 
-        let held_list: Vec<(usize, bool, (i32, i32), PieceGeometry, Sprite8061)> = world
+        let held_list: Vec<HeldRenderPiece> = world
             .query::<(&PieceIdentity, &PieceGeometry, &PieceSprite, &PieceLocation)>()
             .iter(world)
             .filter_map(|(ident, geom, spr, loc)| match *loc {
@@ -675,7 +690,13 @@ impl PuzzleRenderer {
                     is_anchor,
                     group_offset,
                     ..
-                } => Some((ident.index, is_anchor, group_offset, *geom, spr.sprite.clone())),
+                } => Some((
+                    ident.index,
+                    is_anchor,
+                    group_offset,
+                    *geom,
+                    spr.sprite.clone(),
+                )),
                 _ => None,
             })
             .collect();
@@ -812,7 +833,11 @@ impl PuzzleRenderer {
         pointer_x: i32,
         pointer_y: i32,
     ) {
-        let has_anim = world.query::<&AnimationState>().iter(world).next().is_some();
+        let has_anim = world
+            .query::<&AnimationState>()
+            .iter(world)
+            .next()
+            .is_some();
         let tray_len = world
             .query::<&PieceLocation>()
             .iter(world)
@@ -957,7 +982,7 @@ impl PuzzleRenderer {
         pointer_y: i32,
         rgba_out: &mut Vec<u8>,
     ) -> Option<(i32, i32, i32, i32)> {
-        let held_list: Vec<(usize, bool, (i32, i32), PieceGeometry, Sprite8061)> = world
+        let held_list: Vec<HeldRenderPiece> = world
             .query::<(&PieceIdentity, &PieceGeometry, &PieceSprite, &PieceLocation)>()
             .iter(world)
             .filter_map(|(ident, geom, spr, loc)| match *loc {
@@ -965,7 +990,13 @@ impl PuzzleRenderer {
                     is_anchor,
                     group_offset,
                     ..
-                } => Some((ident.index, is_anchor, group_offset, *geom, spr.sprite.clone())),
+                } => Some((
+                    ident.index,
+                    is_anchor,
+                    group_offset,
+                    *geom,
+                    spr.sprite.clone(),
+                )),
                 _ => None,
             })
             .collect();
@@ -1098,7 +1129,11 @@ impl PuzzleRenderer {
         pointer_x: i32,
         pointer_y: i32,
     ) {
-        let has_anim = world.query::<&AnimationState>().iter(world).next().is_some();
+        let has_anim = world
+            .query::<&AnimationState>()
+            .iter(world)
+            .next()
+            .is_some();
         let mut tray_items: Vec<(usize, Sprite8061)> = world
             .query::<(&PieceSprite, &PieceLocation)>()
             .iter(world)

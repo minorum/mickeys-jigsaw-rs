@@ -1035,13 +1035,13 @@ mod tests {
     )]
     #[test]
     fn scene_wait_does_not_overlap_busy_audio_or_trap_a_loop() {
-        use bevy_ecs::system::RunSystemOnce;
-        use bevy_state::prelude::{NextState, StateTransition};
         use crate::app::{AppInput, AppScreen, build_game_app, step_app};
         use crate::assets::{FrameCommand, PuzzleAsset, SceneRecord};
         use crate::ecs::components::AnimationState;
         use crate::ecs::resources::{ActivePuzzle, AudioStatus};
         use crate::ecs::systems::browser::spawn_puzzle_session;
+        use bevy_ecs::system::RunSystemOnce;
+        use bevy_state::prelude::{NextState, StateTransition};
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut asset = PuzzleAsset::load(dir, 2, false).unwrap();
         let sound = asset
@@ -1162,9 +1162,7 @@ mod tests {
             assert_eq!(anim.cur_frame, frame);
         }
         assert_eq!(app.world().non_send::<AudioEngine>().sfx_sinks.len(), 1);
-        app.world_mut()
-            .non_send_mut::<AudioEngine>()
-            .stop_all();
+        app.world_mut().non_send_mut::<AudioEngine>().stop_all();
         step_app(
             &mut app,
             &AppInput {

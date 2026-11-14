@@ -25,7 +25,12 @@ pub fn setup_input_system(
     mut config: ResMut<GameConfig>,
     mut browser: ResMut<BrowserState>,
     mut active_puzzle: ResMut<ActivePuzzle>,
-    mut piece_q: Query<(Entity, &PieceIdentity, &mut crate::ecs::components::PieceGeometry, &mut PieceSprite)>,
+    mut piece_q: Query<(
+        Entity,
+        &PieceIdentity,
+        &mut crate::ecs::components::PieceGeometry,
+        &mut PieceSprite,
+    )>,
     hotspot_q: Query<Entity, With<SceneHotspot>>,
     anim_q: Query<Entity, With<AnimationState>>,
     mut audio_out: MessageWriter<AudioCommand>,
@@ -124,7 +129,12 @@ fn exit_setup(
     config: &mut GameConfig,
     browser: &mut BrowserState,
     active_puzzle: &mut ActivePuzzle,
-    piece_q: &mut Query<(Entity, &PieceIdentity, &mut crate::ecs::components::PieceGeometry, &mut PieceSprite)>,
+    piece_q: &mut Query<(
+        Entity,
+        &PieceIdentity,
+        &mut crate::ecs::components::PieceGeometry,
+        &mut PieceSprite,
+    )>,
     hotspot_q: &Query<Entity, With<SceneHotspot>>,
     anim_q: &Query<Entity, With<AnimationState>>,
     audio_out: &mut MessageWriter<AudioCommand>,
@@ -158,7 +168,12 @@ pub fn sync_prefs_from_setup(
     config: &mut GameConfig,
     browser: &mut BrowserState,
     active_puzzle: &mut ActivePuzzle,
-    piece_q: &mut Query<(Entity, &PieceIdentity, &mut crate::ecs::components::PieceGeometry, &mut PieceSprite)>,
+    piece_q: &mut Query<(
+        Entity,
+        &PieceIdentity,
+        &mut crate::ecs::components::PieceGeometry,
+        &mut PieceSprite,
+    )>,
     hotspot_q: &Query<Entity, With<SceneHotspot>>,
     anim_q: &Query<Entity, With<AnimationState>>,
     audio_out: &mut MessageWriter<AudioCommand>,
@@ -181,14 +196,7 @@ pub fn sync_prefs_from_setup(
             Ok((preview, active)) => {
                 browser.preview_asset = preview;
                 if let (Some(meta), Some(asset)) = (&mut active_puzzle.0, active) {
-                    replace_scene_asset_ecs(
-                        commands,
-                        meta,
-                        asset,
-                        piece_q,
-                        hotspot_q,
-                        anim_q,
-                    );
+                    replace_scene_asset_ecs(commands, meta, asset, piece_q, hotspot_q, anim_q);
                     audio_out.write(AudioCommand::StopAll);
                 }
                 config.session_use_ega = next_ega;
@@ -219,7 +227,12 @@ pub fn replace_scene_asset_ecs(
     commands: &mut Commands,
     meta: &mut crate::ecs::resources::PuzzleMeta,
     asset: PuzzleAsset,
-    piece_q: &mut Query<(Entity, &PieceIdentity, &mut crate::ecs::components::PieceGeometry, &mut PieceSprite)>,
+    piece_q: &mut Query<(
+        Entity,
+        &PieceIdentity,
+        &mut crate::ecs::components::PieceGeometry,
+        &mut PieceSprite,
+    )>,
     hotspot_q: &Query<Entity, With<SceneHotspot>>,
     anim_q: &Query<Entity, With<AnimationState>>,
 ) {

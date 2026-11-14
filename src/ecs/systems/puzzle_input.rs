@@ -130,8 +130,13 @@ pub fn puzzle_input_system(
     }
 
     if input.right_pressed && !meta.solved {
-        if !handle_right_click(meta, &mut piece_q, &mut audio_out, input.pointer_x, input.pointer_y)
-        {
+        if !handle_right_click(
+            meta,
+            &mut piece_q,
+            &mut audio_out,
+            input.pointer_x,
+            input.pointer_y,
+        ) {
             toggle_toolbox(meta);
         }
     } else if input.space && !meta.solved {
@@ -252,7 +257,10 @@ pub fn puzzle_input_system(
         }
     }
 
-    let tray_len = piece_q.iter().filter(|(_, _, _, _, loc)| loc.is_tray()).count();
+    let tray_len = piece_q
+        .iter()
+        .filter(|(_, _, _, _, loc)| loc.is_tray())
+        .count();
     if input.up || input.wheel_delta > 0 {
         scroll_tray(meta, -1, tray_len);
     }
@@ -264,7 +272,10 @@ pub fn puzzle_input_system(
         meta.keyboard_pointer = None;
         meta.drag_origin = None;
         let has_anim = anim_q.iter().next().is_some();
-        let tray_len = piece_q.iter().filter(|(_, _, _, _, loc)| loc.is_tray()).count();
+        let tray_len = piece_q
+            .iter()
+            .filter(|(_, _, _, _, loc)| loc.is_tray())
+            .count();
         let pressed = meta.toolbox_target_at(input.pointer_x, input.pointer_y, has_anim, tray_len);
         let was_holding = piece_q.iter().any(|(_, _, _, _, loc)| loc.is_held());
         let menu_clicked = handle_puzzle_click(
@@ -349,7 +360,9 @@ fn scroll_tray(meta: &mut PuzzleMeta, delta: i32, tray_len: usize) -> bool {
     }
     let prev = meta.tray_scroll;
     if delta < 0 {
-        meta.tray_scroll = meta.tray_scroll.saturating_sub(delta.unsigned_abs() as usize);
+        meta.tray_scroll = meta
+            .tray_scroll
+            .saturating_sub(delta.unsigned_abs() as usize);
     } else if delta > 0 {
         meta.tray_scroll = meta.tray_scroll.saturating_add(delta as usize);
         meta.clamp_tray_scroll(tray_len);
@@ -374,7 +387,14 @@ fn trigger_hint(
     }
     // Priority: held anchor -> first visible tray piece -> first tray piece -> first misplaced board piece
     let held_anchor = piece_q.iter().find_map(|(e, _, _, _, loc)| {
-        matches!(*loc, PieceLocation::Held { is_anchor: true, .. }).then_some(e)
+        matches!(
+            *loc,
+            PieceLocation::Held {
+                is_anchor: true,
+                ..
+            }
+        )
+        .then_some(e)
     });
     let target_entity = held_anchor
         .or_else(|| {
@@ -541,12 +561,7 @@ fn handle_puzzle_click(
         if mx < 28 && my < 24 {
             return true;
         }
-        let playback = solved_sequence_at(
-            &meta.asset,
-            hotspot_q.iter(),
-            mx - SCENE_OFFSET_X,
-            my,
-        );
+        let playback = solved_sequence_at(&meta.asset, hotspot_q.iter(), mx - SCENE_OFFSET_X, my);
         let mut cmds = Vec::new();
         if let Some(anim) = build_animation_state(meta, playback, audio_status, &mut cmds) {
             flush_audio_commands(cmds, audio_out);
@@ -562,7 +577,10 @@ fn handle_puzzle_click(
         if my < 18 {
             return true;
         }
-        let tray_len = piece_q.iter().filter(|(_, _, _, _, loc)| loc.is_tray()).count();
+        let tray_len = piece_q
+            .iter()
+            .filter(|(_, _, _, _, loc)| loc.is_tray())
+            .count();
         if my < 30 {
             if scroll_tray(meta, -1, tray_len) {
                 audio_out.write(AudioCommand::PlayUiClick);
