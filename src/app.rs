@@ -74,6 +74,7 @@ pub struct AppInput {
     pub dt: f32,
     pub pointer_x: i32,
     pub pointer_y: i32,
+    pub pointer_moved: bool,
     pub left_pressed: bool,
     pub left_released: bool,
     pub right_pressed: bool,
@@ -166,6 +167,7 @@ pub struct GameApp {
     pub confirm_exit_puzzle: bool,
     pub browser_status: Option<(String, f32)>,
     pub quit_requested: bool,
+    pub(crate) quit_elapsed: f32,
     pub error: Option<String>,
 
     app_rev: u64,
@@ -228,6 +230,7 @@ impl GameApp {
             confirm_exit_puzzle: false,
             browser_status: None,
             quit_requested: false,
+            quit_elapsed: 0.0,
             error: None,
             app_rev: 1,
         })
@@ -274,6 +277,7 @@ impl GameApp {
             confirm_exit_puzzle: false,
             browser_status: None,
             quit_requested: false,
+            quit_elapsed: 0.0,
             error: None,
             app_rev: 1,
         }
@@ -492,9 +496,18 @@ impl GameApp {
     }
 
     pub fn request_quit(&mut self) {
+        if self.quit_requested {
+            return;
+        }
         self.audio.play_common(CommonSound::Quit);
         self.quit_requested = true;
+        self.quit_elapsed = 0.0;
         self.bump_rev();
+    }
+
+    /// Returns `true` once the quitting phase has finished playing the exit cue (or timed out).
+    pub fn should_exit(&self) -> bool {
+        self.quit_requested && (!self.audio.is_effect_playing() || self.quit_elapsed >= 3.0)
     }
 
     pub fn has_mickey_cursor(&self) -> bool {
@@ -526,6 +539,10 @@ impl GameApp {
         };
         if !matches!(self.screen, AppScreen::Setup { .. }) {
             self.audio.update(dt);
+        }
+        if self.quit_requested {
+            self.quit_elapsed += dt;
+            return;
         }
         self.process_input(input, dt);
         self.audio
@@ -666,7 +683,12 @@ impl GameApp {
                     let was_animating = sess.active_anim.is_some();
                     sess.update(dt, &mut self.audio);
 
-                    if input.right_pressed {
+                    if input.right_pressed
+                        || (input.pointer_moved
+                            && input.move_x == 0
+                            && input.move_y == 0
+                            && !input.enter)
+                    {
                         sess.clear_keyboard_pointer();
                     }
                     if !input.left_pressed && !input.right_pressed {
