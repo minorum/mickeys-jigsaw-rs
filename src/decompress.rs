@@ -7,19 +7,18 @@ use std::borrow::Cow;
 
 /// Read RLE-encoded symbol bit-lengths from a `DA\0\0` header.
 fn read_tree_lengths(src: &[u8], pos: &mut usize, n_expected: usize) -> Result<Vec<u8>, String> {
-    if *pos >= src.len() {
-        return Err("Unexpected EOF reading tree length count".to_string());
-    }
-    let count = (src[*pos] as usize) + 1;
+    let count = usize::from(
+        *src.get(*pos)
+            .ok_or("Unexpected EOF reading tree length count")?,
+    ) + 1;
     *pos += 1;
+    let encoded = src
+        .get(*pos..*pos + count)
+        .ok_or("Unexpected EOF reading tree lengths")?;
+    *pos += count;
     let mut lengths = Vec::with_capacity(n_expected);
-    for _ in 0..count {
-        if *pos >= src.len() {
-            return Err("Unexpected EOF reading tree lengths".to_string());
-        }
-        let b = src[*pos];
-        *pos += 1;
-        let run_len = (((b >> 4) & 0x0F) as usize) + 1;
+    for &b in encoded {
+        let run_len = usize::from(b >> 4) + 1;
         let bit_len = (b & 0x0F) + 1;
         lengths.extend(std::iter::repeat_n(bit_len, run_len));
     }
@@ -181,14 +180,15 @@ pub fn decompress_da(data: &[u8]) -> Result<Vec<u8>, String> {
     }
     let flags = u16::from_le_bytes([data[8], data[9]]);
     let method = u16::from_le_bytes([data[10], data[11]]);
+    let packed_size = u32::from_le_bytes([data[12], data[13], data[14], data[15]]) as usize;
     let uncomp_size = u32::from_le_bytes([data[16], data[17], data[18], data[19]]) as usize;
-    let packed_size = u32::from_le_bytes(data[12..16].try_into().unwrap()) as usize;
     if packed_size > data.len() - 20 || uncomp_size > 64 * 1024 * 1024 {
         return Err("Invalid DA payload size".to_string());
     }
+    let payload = &data[..20 + packed_size];
 
     if method == 0 {
-        return data
+        return payload
             .get(20..20 + uncomp_size)
             .map(<[u8]>::to_vec)
             .ok_or_else(|| "Truncated raw DA payload".to_string());
@@ -205,18 +205,18 @@ pub fn decompress_da(data: &[u8]) -> Result<Vec<u8>, String> {
     let min_match: usize = if is_8k { 3 } else { 2 };
 
     let lit_decoder = if has_lit_tree {
-        let lit_lens = read_tree_lengths(data, &mut pos, 256)?;
+        let lit_lens = read_tree_lengths(payload, &mut pos, 256)?;
         Some(PrefixDecoder::build(&lit_lens))
     } else {
         None
     };
-    let len_lens = read_tree_lengths(data, &mut pos, 64)?;
+    let len_lens = read_tree_lengths(payload, &mut pos, 64)?;
     let len_decoder = PrefixDecoder::build(&len_lens);
 
-    let dist_lens = read_tree_lengths(data, &mut pos, 64)?;
+    let dist_lens = read_tree_lengths(payload, &mut pos, 64)?;
     let dist_decoder = PrefixDecoder::build(&dist_lens);
 
-    let mut reader = BitReader::new(data, pos);
+    let mut reader = BitReader::new(payload, pos);
     let mut out = Vec::with_capacity(uncomp_size);
     while out.len() < uncomp_size {
         if reader.read_bits(1) == 1 {
@@ -264,7 +264,7 @@ pub fn decompress_da(data: &[u8]) -> Result<Vec<u8>, String> {
         }
     }
 
-    if reader.consumed_bytes_exceed(data.len()) {
+    if reader.consumed_bytes_exceed(payload.len()) {
         return Err("Truncated DA bitstream".to_string());
     }
     Ok(out)
@@ -281,15 +281,10 @@ pub fn split_multi_resource(buf: &[u8]) -> Result<Vec<&[u8]>, String> {
     if buf.len() < table_end {
         return Err("Multi-resource table truncated".to_string());
     }
-    let mut sizes = Vec::with_capacity(count);
-    for i in 0..count {
-        let off = 2 + i * 4;
-        let sz = u32::from_le_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]]) as usize;
-        sizes.push(sz);
-    }
     let mut pos = table_end;
     let mut chunks = Vec::with_capacity(count);
-    for &sz in &sizes {
+    for &entry in buf[2..table_end].as_chunks::<4>().0 {
+        let sz = u32::from_le_bytes(entry) as usize;
         let end = pos
             .checked_add(sz)
             .filter(|&end| end <= buf.len())
@@ -311,12 +306,11 @@ pub struct IlbmImage {
 }
 
 /// Decodes an IFF `FORM` -> `ILBM` planar image (`seg_0701`, `VGA.BIN` `1000:172f`).
-pub fn decode_ilbm(buf: &[u8]) -> Result<IlbmImage, String> {
-    let data = buf;
+pub fn decode_ilbm(data: &[u8]) -> Result<IlbmImage, String> {
     if data.len() < 12 || &data[..4] != b"FORM" || &data[8..12] != b"ILBM" {
         return Err("Invalid ILBM header".to_string());
     }
-    let form_len = u32::from_be_bytes(data[4..8].try_into().unwrap()) as usize;
+    let form_len = u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
     let data = data
         .get(..form_len.checked_add(8).ok_or("Invalid FORM size")?)
         .ok_or("Truncated FORM")?;
@@ -331,15 +325,17 @@ pub fn decode_ilbm(buf: &[u8]) -> Result<IlbmImage, String> {
 
     while pos + 8 <= data.len() {
         let tag = &data[pos..pos + 4];
-        let raw_sz =
-            u32::from_be_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]]);
-        let csz = raw_sz as usize;
+        let csz = u32::from_be_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]])
+            as usize;
         pos += 8;
         let end = pos.checked_add(csz).ok_or("Invalid ILBM chunk size")?;
         let chunk = data.get(pos..end).ok_or("Truncated ILBM chunk")?;
 
         match tag {
-            b"BMHD" if chunk.len() >= 20 => {
+            b"BMHD" => {
+                if chunk.len() < 20 {
+                    return Err("Truncated BMHD chunk".to_string());
+                }
                 width = u16::from_be_bytes([chunk[0], chunk[1]]);
                 height = u16::from_be_bytes([chunk[2], chunk[3]]);
                 n_planes = chunk[8];
@@ -349,9 +345,8 @@ pub fn decode_ilbm(buf: &[u8]) -> Result<IlbmImage, String> {
                 }
             }
             b"CMAP" => {
-                let n_colors = (chunk.len() / 3).min(256);
-                for i in 0..n_colors {
-                    palette[i] = [chunk[i * 3], chunk[i * 3 + 1], chunk[i * 3 + 2]];
+                for (dst, &rgb) in palette.iter_mut().zip(chunk.as_chunks::<3>().0) {
+                    *dst = rgb;
                 }
             }
             b"BODY" => {
@@ -366,7 +361,6 @@ pub fn decode_ilbm(buf: &[u8]) -> Result<IlbmImage, String> {
     let body_bytes = body.ok_or_else(|| "Missing BODY chunk in ILBM".to_string())?;
     let w = width as usize;
     let h = height as usize;
-    let planes = (n_planes as usize).min(8);
     if w == 0
         || h == 0
         || w * h > 16 * 1024 * 1024
@@ -375,11 +369,12 @@ pub fn decode_ilbm(buf: &[u8]) -> Result<IlbmImage, String> {
     {
         return Err("Unsupported ILBM dimensions or compression".to_string());
     }
+    let planes = n_planes as usize;
     let row_plane_bytes = w.div_ceil(16) * 2;
+    let expected = h * planes * row_plane_bytes;
 
     // Decompress ByteRun1 if compression == 1, otherwise use raw bitplanes
     let raw_planes: Cow<'_, [u8]> = if compression == 1 {
-        let expected = h * planes * row_plane_bytes;
         let mut dec = Vec::with_capacity(expected);
         let mut bp = 0usize;
         while bp < body_bytes.len() && dec.len() < expected {
@@ -401,7 +396,7 @@ pub fn decode_ilbm(buf: &[u8]) -> Result<IlbmImage, String> {
     } else {
         Cow::Borrowed(body_bytes)
     };
-    if raw_planes.len() != h * planes * row_plane_bytes {
+    if raw_planes.len() != expected {
         return Err("Invalid ILBM BODY size".to_string());
     }
 
@@ -410,7 +405,8 @@ pub fn decode_ilbm(buf: &[u8]) -> Result<IlbmImage, String> {
     for y in 0..h {
         let row_base = y * planes * row_plane_bytes;
         let dst_row = &mut pixels[y * w..(y + 1) * w];
-        for (p, plane_bit) in (0..planes).map(|p| (p, 1u8 << p)) {
+        for p in 0..planes {
+            let plane_bit = 1u8 << p;
             let plane = &raw_planes[row_base + p * row_plane_bytes..][..row_plane_bytes];
             for (x, dst) in dst_row.iter_mut().enumerate() {
                 if (plane[x >> 3] & (0x80u8 >> (x & 7))) != 0 {
@@ -501,5 +497,94 @@ mod tests {
             let decoded = decompress_da(&sparse_da(literal_tree, payload, size));
             assert_eq!(decoded.unwrap_err(), "Invalid DA prefix code", "{name}");
         }
+    }
+
+    #[test]
+    fn decompress_da_enforces_header_method_and_packed_bounds() {
+        assert_eq!(decompress_da(b"RAW").unwrap(), b"RAW");
+        assert!(decompress_da(b"DA\0\0short").is_err());
+
+        let mut raw = vec![0; 25];
+        raw[..4].copy_from_slice(b"DA\0\0");
+        raw[12..16].copy_from_slice(&5u32.to_le_bytes());
+        raw[16..20].copy_from_slice(&5u32.to_le_bytes());
+        raw[20..25].copy_from_slice(b"HELLO");
+        assert_eq!(decompress_da(&raw).unwrap(), b"HELLO");
+
+        // Uncompressed size exceeding packed_size must fail even with trailing bytes.
+        raw[16..20].copy_from_slice(&6u32.to_le_bytes());
+        raw.push(b'!');
+        assert!(decompress_da(&raw).is_err());
+
+        // Unsupported method.
+        raw[10..12].copy_from_slice(&2u16.to_le_bytes());
+        assert!(decompress_da(&raw).is_err());
+
+        // Trailing bytes beyond packed_size must not satisfy a truncated method-1 stream.
+        let mut packed = sparse_da(false, &[0x83], 1);
+        let packed_len = u32::from_le_bytes(packed[12..16].try_into().unwrap());
+        packed[12..16].copy_from_slice(&(packed_len - 1).to_le_bytes());
+        assert!(decompress_da(&packed).is_err());
+    }
+
+    #[test]
+    fn split_multi_resource_validates_table_and_payload_bounds() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&2u16.to_le_bytes());
+        buf.extend_from_slice(&3u32.to_le_bytes());
+        buf.extend_from_slice(&2u32.to_le_bytes());
+        buf.extend_from_slice(b"abcXY");
+        assert_eq!(
+            super::split_multi_resource(&buf).unwrap(),
+            vec![&b"abc"[..], &b"XY"[..]]
+        );
+
+        assert!(super::split_multi_resource(&[0]).is_err());
+        assert!(super::split_multi_resource(&buf[..9]).is_err());
+        assert!(super::split_multi_resource(&buf[..buf.len() - 1]).is_err());
+
+        buf[2..6].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(super::split_multi_resource(&buf).is_err());
+    }
+
+    #[test]
+    fn decode_ilbm_rejects_truncated_bmhd_and_byterun_streams() {
+        let mut ilbm = Vec::new();
+        ilbm.extend_from_slice(b"FORM");
+        ilbm.extend_from_slice(&0u32.to_be_bytes());
+        ilbm.extend_from_slice(b"ILBM");
+        ilbm.extend_from_slice(b"BMHD");
+        ilbm.extend_from_slice(&20u32.to_be_bytes());
+        let mut bmhd = [0u8; 20];
+        bmhd[0..2].copy_from_slice(&16u16.to_be_bytes());
+        bmhd[2..4].copy_from_slice(&1u16.to_be_bytes());
+        bmhd[8] = 1;
+        bmhd[10] = 1; // ByteRun1
+        ilbm.extend_from_slice(&bmhd);
+        ilbm.extend_from_slice(b"BODY");
+        ilbm.extend_from_slice(&2u32.to_be_bytes());
+        ilbm.extend_from_slice(&[0xFF, 0xAA]); // repeat 2x 0xAA
+        let form_len = (ilbm.len() - 8) as u32;
+        ilbm[4..8].copy_from_slice(&form_len.to_be_bytes());
+
+        let img = super::decode_ilbm(&ilbm).unwrap();
+        assert_eq!((img.width, img.height, img.n_planes), (16, 1, 1));
+        assert_eq!(img.pixels[..8], [1, 0, 1, 0, 1, 0, 1, 0]);
+
+        // Truncated BMHD (< 20 bytes) must be rejected rather than falling back to defaults.
+        let mut bad_bmhd = ilbm.clone();
+        bad_bmhd[16..20].copy_from_slice(&19u32.to_be_bytes());
+        assert_eq!(
+            super::decode_ilbm(&bad_bmhd).unwrap_err(),
+            "Truncated BMHD chunk"
+        );
+
+        // Truncated ByteRun1 repeat byte.
+        let mut trunc_repeat = ilbm.clone();
+        trunc_repeat.pop();
+        let len = (trunc_repeat.len() - 8) as u32;
+        trunc_repeat[4..8].copy_from_slice(&len.to_be_bytes());
+        trunc_repeat[44..48].copy_from_slice(&1u32.to_be_bytes());
+        assert!(super::decode_ilbm(&trunc_repeat).is_err());
     }
 }

@@ -1816,5 +1816,48 @@ fn blit_thumbnail_ignores_zero_dimensions() {
     let non_zero = Sprite8061::from_8bpp(4, 4, 0, vec![5; 16], vec![true; 16]);
     fb.blit_thumbnail(&non_zero, 10, 10, 0, 20);
     fb.blit_thumbnail(&non_zero, 10, 10, 20, 0);
+    fb.blit_thumbnail(&non_zero, 10, 10, -5, 20);
+    fb.blit_thumbnail(&non_zero, 10, 10, 20, -5);
     assert!(fb.pixels.iter().all(|&p| p == 0));
+}
+
+#[test]
+fn replace_scene_asset_clears_hint_when_piece_count_changes() {
+    let mut asset_two = synthetic_puzzle_asset(1, false);
+    asset_two.records.push(SceneRecord::Frame {
+        bg_color: 0,
+        bg_frame_idx: 0,
+        commands: vec![
+            FrameCommand::SubFrame {
+                dx: 0,
+                dy: 0,
+                frame_idx: 2,
+                flags: 0,
+            },
+            FrameCommand::SubFrame {
+                dx: 10,
+                dy: 10,
+                frame_idx: 3,
+                flags: 0,
+            },
+        ],
+    });
+    let mut asset_one = synthetic_puzzle_asset(1, true);
+    asset_one.records.push(SceneRecord::Frame {
+        bg_color: 0,
+        bg_frame_idx: 0,
+        commands: vec![FrameCommand::SubFrame {
+            dx: 0,
+            dy: 0,
+            frame_idx: 2,
+            flags: 0,
+        }],
+    });
+    let mut session = PuzzleSession::new(1, asset_two, 0, true, false, false);
+    assert_eq!(session.pieces.len(), 2);
+    session.hint_piece = Some((1, 1.5));
+
+    session.replace_scene_asset(asset_one);
+    assert_eq!(session.pieces.len(), 1);
+    assert_eq!(session.hint_piece, None);
 }
