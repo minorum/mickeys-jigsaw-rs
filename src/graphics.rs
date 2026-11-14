@@ -235,6 +235,29 @@ impl Framebuffer {
     /// - `flags & 2`: vertical flip
     /// - `(flags >> 4) & 0xF`: mode (`0` = transparent blit, `1` = opaque copy, `2` = solid color silhouette `(flags >> 8)`)
     pub fn blit_sprite(&mut self, spr: &Sprite8061, x: i32, y: i32, flags: u16) {
+        self.blit_sprite_with_remap(spr, x, y, flags, None);
+    }
+
+    /// Blits a `0x8061` sprite at `(x, y)` remapping non-transparent pixel indices through `remap`.
+    pub fn blit_sprite_remapped(
+        &mut self,
+        spr: &Sprite8061,
+        x: i32,
+        y: i32,
+        flags: u16,
+        remap: &[u8; 256],
+    ) {
+        self.blit_sprite_with_remap(spr, x, y, flags, Some(remap));
+    }
+
+    fn blit_sprite_with_remap(
+        &mut self,
+        spr: &Sprite8061,
+        x: i32,
+        y: i32,
+        flags: u16,
+        remap: Option<&[u8; 256]>,
+    ) {
         let flip_x = (flags & 1) != 0;
         let flip_y = (flags & 2) != 0;
         let mode = (flags >> 4) & 0x0F;
@@ -296,26 +319,38 @@ impl Framebuffer {
             let src_row = &spr.pixels[src_start..src_start + len];
             let mask_row = opacity.map(|m| &m[src_start..src_start + len]);
             let solid = (mode == 2).then_some(solid_color);
-            match (mode == 1, flip_x) {
-                (true, false) => dst_slice.copy_from_slice(src_row),
-                (true, true) => {
+            match (mode == 1, flip_x, remap) {
+                (true, false, None) => dst_slice.copy_from_slice(src_row),
+                (true, false, Some(table)) => {
+                    for (dst, &src) in dst_slice.iter_mut().zip(src_row.iter()) {
+                        *dst = table[src as usize];
+                    }
+                }
+                (true, true, None) => {
                     for (dst, &src) in dst_slice.iter_mut().zip(src_row.iter().rev()) {
                         *dst = src;
                     }
                 }
-                (false, false) => blit_masked_row(
+                (true, true, Some(table)) => {
+                    for (dst, &src) in dst_slice.iter_mut().zip(src_row.iter().rev()) {
+                        *dst = table[src as usize];
+                    }
+                }
+                (false, false, _) => blit_masked_row(
                     dst_slice,
                     src_row.iter(),
                     mask_row.map(|m| m.iter()),
                     spr.transparent_color,
                     solid,
+                    remap,
                 ),
-                (false, true) => blit_masked_row(
+                (false, true, _) => blit_masked_row(
                     dst_slice,
                     src_row.iter().rev(),
                     mask_row.map(|m| m.iter().rev()),
                     spr.transparent_color,
                     solid,
+                    remap,
                 ),
             }
         }
@@ -573,6 +608,7 @@ fn blit_masked_row<'a, P, M>(
     mask_row: Option<M>,
     trans: u8,
     solid: Option<u8>,
+    remap: Option<&[u8; 256]>,
 ) where
     P: Iterator<Item = &'a u8>,
     M: Iterator<Item = &'a bool>,
@@ -588,7 +624,7 @@ fn blit_masked_row<'a, P, M>(
         (Some(mask), None) => {
             for ((dst, &px), &op) in dst_slice.iter_mut().zip(src_row).zip(mask) {
                 if op {
-                    *dst = px;
+                    *dst = remap.map_or(px, |t| t[px as usize]);
                 }
             }
         }
@@ -602,7 +638,7 @@ fn blit_masked_row<'a, P, M>(
         (None, None) => {
             for (dst, &px) in dst_slice.iter_mut().zip(src_row) {
                 if px != trans {
-                    *dst = px;
+                    *dst = remap.map_or(px, |t| t[px as usize]);
                 }
             }
         }

@@ -8,9 +8,11 @@ use std::path::PathBuf;
 use crate::assets::{FontAsset, Preferences, PuzzleAsset, ToolboxAsset, load_ilbm_container};
 use crate::audio::{AudioEngine, CommonSound};
 use crate::decompress::IlbmImage;
-use crate::graphics::{Framebuffer, SCREEN_H, SCREEN_W, render_scene_view_with_scratch};
+use crate::graphics::{
+    Framebuffer, SCREEN_H, SCREEN_W, copy_scene_interior, render_scene_view_with_scratch,
+};
 use crate::puzzle::{PuzzleAction, PuzzlePresentKey, PuzzleSession};
-use crate::puzzle_render::PuzzleRenderer;
+use crate::puzzle_render::{PuzzleRenderer, draw_playfield_border_remapped};
 use crate::setup::SetupMenu;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,16 +27,104 @@ pub enum BrowserAction {
     QuitGame,
 }
 
-pub const BROWSER_BUTTONS: [(BrowserAction, i32, i32, [u8; 3]); 8] = [
-    (BrowserAction::PrevPuzzle, 4, 34, [0, 0, 170]),
-    (BrowserAction::NextPuzzle, 40, 34, [0, 0, 170]),
-    (BrowserAction::CyclePieces, 76, 46, [170, 0, 0]),
-    (BrowserAction::ToggleEdges, 124, 48, [170, 0, 170]),
-    (BrowserAction::OpenSetup, 174, 38, [85, 85, 85]),
-    (BrowserAction::StartOrResume, 214, 40, [0, 170, 0]),
-    (BrowserAction::PrintPuzzle, 256, 32, [0, 140, 140]),
-    (BrowserAction::QuitGame, 290, 28, [170, 40, 40]),
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BrowserButton {
+    pub action: BrowserAction,
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BrowserTarget {
+    Button(BrowserAction),
+    PuzzleSlot(usize),
+}
+
+pub const BROWSER_RIGHT_BAR_X: i32 = 304;
+pub const BROWSER_RIGHT_BAR_W: i32 = 16;
+pub const BROWSER_SLOT_Y0: i32 = 35;
+pub const BROWSER_SLOT_H: i32 = 11;
+pub const BROWSER_SLOT_COUNT: usize = 15;
+
+pub const BROWSER_BUTTONS: [BrowserButton; 8] = [
+    BrowserButton {
+        action: BrowserAction::PrevPuzzle,
+        x: 148,
+        y: 160,
+        w: 49,
+        h: 32,
+    },
+    BrowserButton {
+        action: BrowserAction::NextPuzzle,
+        x: 250,
+        y: 160,
+        w: 49,
+        h: 32,
+    },
+    BrowserButton {
+        action: BrowserAction::CyclePieces,
+        x: 88,
+        y: 160,
+        w: 57,
+        h: 15,
+    },
+    BrowserButton {
+        action: BrowserAction::ToggleEdges,
+        x: 88,
+        y: 177,
+        w: 57,
+        h: 15,
+    },
+    BrowserButton {
+        action: BrowserAction::OpenSetup,
+        x: 215,
+        y: 4,
+        w: 41,
+        h: 15,
+    },
+    BrowserButton {
+        action: BrowserAction::StartOrResume,
+        x: 199,
+        y: 160,
+        w: 49,
+        h: 32,
+    },
+    BrowserButton {
+        action: BrowserAction::PrintPuzzle,
+        x: 36,
+        y: 160,
+        w: 49,
+        h: 32,
+    },
+    BrowserButton {
+        action: BrowserAction::QuitGame,
+        x: 258,
+        y: 4,
+        w: 41,
+        h: 15,
+    },
 ];
+
+impl BrowserTarget {
+    /// Returns the interactive Browser control under `(mx, my)`, if any.
+    pub fn hit_test(mx: i32, my: i32) -> Option<Self> {
+        for btn in BROWSER_BUTTONS {
+            if mx >= btn.x && mx < btn.x + btn.w && my >= btn.y && my < btn.y + btn.h {
+                return Some(Self::Button(btn.action));
+            }
+        }
+        if (BROWSER_RIGHT_BAR_X..BROWSER_RIGHT_BAR_X + BROWSER_RIGHT_BAR_W).contains(&mx)
+            && my >= BROWSER_SLOT_Y0
+            && my < BROWSER_SLOT_Y0 + (BROWSER_SLOT_COUNT as i32) * BROWSER_SLOT_H
+        {
+            let slot = ((my - BROWSER_SLOT_Y0) / BROWSER_SLOT_H) as usize;
+            return Some(Self::PuzzleSlot(slot + 1));
+        }
+        None
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppScreen {
@@ -56,6 +146,8 @@ pub enum PresentSignature {
     Browser {
         app_rev: u64,
         caption_key: Option<u64>,
+        hover: Option<BrowserTarget>,
+        pressed: Option<BrowserTarget>,
     },
     Reference {
         session_id: u64,
@@ -137,9 +229,13 @@ pub struct BrowserPreviewCache {
     puzzle_id: usize,
     uses_ega: bool,
     fb: Box<Framebuffer>,
+    tbx_remap: [u8; 256],
     white: u8,
     black: u8,
-    button_bgs: [u8; BROWSER_BUTTONS.len()],
+    yellow: u8,
+    panel_bg: u8,
+    panel_hi: u8,
+    panel_lo: u8,
 }
 
 pub struct GameApp {
@@ -166,6 +262,8 @@ pub struct GameApp {
     pub session_use_ega: bool,
     pub confirm_exit_puzzle: bool,
     pub browser_status: Option<(String, f32)>,
+    pub browser_hover: Option<BrowserTarget>,
+    pub browser_pressed: Option<BrowserTarget>,
     pub quit_requested: bool,
     pub(crate) quit_elapsed: f32,
     pub error: Option<String>,
@@ -229,6 +327,8 @@ impl GameApp {
             session_use_ega: use_ega,
             confirm_exit_puzzle: false,
             browser_status: None,
+            browser_hover: None,
+            browser_pressed: None,
             quit_requested: false,
             quit_elapsed: 0.0,
             error: None,
@@ -276,6 +376,8 @@ impl GameApp {
             session_use_ega: use_ega,
             confirm_exit_puzzle: false,
             browser_status: None,
+            browser_hover: None,
+            browser_pressed: None,
             quit_requested: false,
             quit_elapsed: 0.0,
             error: None,
@@ -446,6 +548,15 @@ impl GameApp {
         }
     }
 
+    pub fn select_puzzle(&mut self, puzzle_id: usize) {
+        let clamped = puzzle_id.clamp(1, 15);
+        if self.selected_puzzle != clamped {
+            self.selected_puzzle = clamped;
+            self.reload_preview();
+        }
+        self.audio.play_common(CommonSound::UiClick);
+    }
+
     pub fn step_puzzle(&mut self, delta: i32) {
         self.selected_puzzle = if delta < 0 {
             if self.selected_puzzle > 1 {
@@ -511,7 +622,7 @@ impl GameApp {
     }
 
     pub fn has_mickey_cursor(&self) -> bool {
-        self.tbx.sprites.get(61).is_some()
+        self.tbx.sprites.len() > 64
     }
 
     pub fn open_setup(&mut self, return_to_playing: bool) {
@@ -634,6 +745,12 @@ impl GameApp {
                         self.bump_rev();
                     }
                 }
+                if input.pointer_moved {
+                    self.browser_hover = BrowserTarget::hit_test(input.pointer_x, input.pointer_y);
+                }
+                if input.left_released {
+                    self.browser_pressed = None;
+                }
                 if input.left {
                     self.step_puzzle(-1);
                 } else if input.right {
@@ -655,7 +772,14 @@ impl GameApp {
                 } else if input.escape || input.key_q {
                     self.request_quit();
                 } else if input.left_pressed {
+                    let target = BrowserTarget::hit_test(input.pointer_x, input.pointer_y);
+                    self.browser_hover = target;
+                    self.browser_pressed = target;
                     self.handle_browser_click(input.pointer_x, input.pointer_y);
+                }
+                if self.screen != AppScreen::Browser {
+                    self.browser_hover = None;
+                    self.browser_pressed = None;
                 }
             }
             AppScreen::Playing => {
@@ -832,29 +956,26 @@ impl GameApp {
     }
 
     pub fn handle_browser_click(&mut self, mx: i32, my: i32) {
-        // Bottom control bar buttons (`y = 170..196`)
-        if (170..=196).contains(&my) {
-            for &(action, bx, bw, _) in &BROWSER_BUTTONS {
-                if (bx..=bx + bw).contains(&mx) {
-                    match action {
-                        BrowserAction::PrevPuzzle => self.step_puzzle(-1),
-                        BrowserAction::NextPuzzle => self.step_puzzle(1),
-                        BrowserAction::CyclePieces => self.step_grid_dim(1),
-                        BrowserAction::ToggleEdges => self.toggle_curved_edges(),
-                        BrowserAction::OpenSetup => {
-                            self.open_setup(false);
-                        }
-                        BrowserAction::StartOrResume => self.start_selected_puzzle(),
-                        BrowserAction::PrintPuzzle => self.print_selected_puzzle(),
-                        BrowserAction::QuitGame => self.request_quit(),
-                    }
-                    return;
+        match BrowserTarget::hit_test(mx, my) {
+            Some(BrowserTarget::Button(action)) => match action {
+                BrowserAction::PrevPuzzle => self.step_puzzle(-1),
+                BrowserAction::NextPuzzle => self.step_puzzle(1),
+                BrowserAction::CyclePieces => self.step_grid_dim(1),
+                BrowserAction::ToggleEdges => self.toggle_curved_edges(),
+                BrowserAction::OpenSetup => {
+                    self.audio.play_common(CommonSound::SetupStart);
+                    self.open_setup(false);
+                }
+                BrowserAction::StartOrResume => self.start_selected_puzzle(),
+                BrowserAction::PrintPuzzle => self.print_selected_puzzle(),
+                BrowserAction::QuitGame => self.request_quit(),
+            },
+            Some(BrowserTarget::PuzzleSlot(puzzle_id)) => self.select_puzzle(puzzle_id),
+            None => {
+                if (34..302).contains(&mx) && (22..158).contains(&my) {
+                    self.start_selected_puzzle();
                 }
             }
-        }
-        // Clicking the puzzle preview itself starts the puzzle!
-        if my < 168 {
-            self.start_selected_puzzle();
         }
     }
 
@@ -878,6 +999,8 @@ impl GameApp {
             AppScreen::Browser => PresentSignature::Browser {
                 app_rev: self.app_rev,
                 caption_key,
+                hover: self.browser_hover,
+                pressed: self.browser_pressed,
             },
             AppScreen::Playing => {
                 let session = self.session.as_ref()?;
@@ -931,6 +1054,15 @@ impl AppRenderer {
         }
     }
 
+    fn cursor_hotspot(sprite_idx: usize) -> (i32, i32) {
+        match sprite_idx {
+            62 => (-6, 0),
+            63 => (-10, 0),
+            64 => (-7, 0),
+            _ => (0, 0),
+        }
+    }
+
     fn desired_cursor(
         app: &GameApp,
         mx: i32,
@@ -950,15 +1082,20 @@ impl AppRenderer {
         if !(0..SCREEN_W).contains(&px) || !(0..SCREEN_H).contains(&py) {
             return None;
         }
-        let sprite_idx = if app.screen == AppScreen::Playing
-            && app.session.as_ref().is_some_and(|s| s.held_piece.is_some())
-        {
-            62
-        } else {
-            61
+        let sprite_idx = match app.screen {
+            AppScreen::Playing => match app.session.as_ref() {
+                Some(_) if app.confirm_exit_puzzle => 62,
+                Some(sess) if sess.held_piece.is_some() => 63,
+                Some(sess) if (sess.toolbox_open && px < 46) || sess.solved => 62,
+                Some(_) => 64,
+                None => 62,
+            },
+            AppScreen::Browser if app.browser_pressed.is_some() => 63,
+            _ => 62,
         };
         app.tbx.sprites.get(sprite_idx)?;
-        Some((sprite_idx, px, py))
+        let (hx, hy) = Self::cursor_hotspot(sprite_idx);
+        Some((sprite_idx, px + hx, py + hy))
     }
 
     fn blit_cursor_rgba(&mut self, app: &GameApp, sprite_idx: usize, px: i32, py: i32) {
@@ -1071,6 +1208,7 @@ impl AppRenderer {
             }
             AppScreen::Browser => {
                 let key = (app.preview_asset.id, app.preview_asset.uses_ega());
+                let tbx = if key.1 { &app.tbx_ega } else { &app.tbx };
                 let needs_rebuild = preview_cache
                     .as_ref()
                     .is_none_or(|c| (c.puzzle_id, c.uses_ega) != key);
@@ -1085,19 +1223,62 @@ impl AppRenderer {
                         &app.preview_asset,
                         app.preview_asset.static_frame_idx(),
                     );
-                    let white = cached_fb.color_index([255; 3]);
                     let black = cached_fb.color_index([0; 3]);
-                    let mut button_bgs = [0u8; BROWSER_BUTTONS.len()];
-                    for (dst, &(_, _, _, rgb)) in button_bgs.iter_mut().zip(&BROWSER_BUTTONS) {
-                        *dst = cached_fb.color_index(rgb);
+                    cached_fb.clear(black);
+                    copy_scene_interior(&mut cached_fb, scratch_fb, 34);
+
+                    let mut tbx_remap = [0u8; 256];
+                    for (i, &rgb) in tbx.palette.iter().enumerate() {
+                        tbx_remap[i] = cached_fb.color_index(rgb);
                     }
+                    draw_playfield_border_remapped(&mut cached_fb, tbx, 32, 272, &tbx_remap);
+                    if tbx.sprites.len() > 12 {
+                        cached_fb.blit_sprite_remapped(&tbx.sprites[10], 0, 0, 0, &tbx_remap);
+                        for row in 0..10 {
+                            cached_fb.blit_sprite_remapped(
+                                &tbx.sprites[11],
+                                0,
+                                8 + row * 19,
+                                0,
+                                &tbx_remap,
+                            );
+                        }
+                        cached_fb.blit_sprite_remapped(&tbx.sprites[12], 0, 198, 0, &tbx_remap);
+                    }
+                    if tbx.sprites.len() > 13 {
+                        cached_fb.blit_sprite_remapped(
+                            &tbx.sprites[13],
+                            BROWSER_RIGHT_BAR_X,
+                            0,
+                            0,
+                            &tbx_remap,
+                        );
+                    }
+                    if tbx.sprites.len() > 17 {
+                        cached_fb.blit_sprite_remapped(
+                            &tbx.sprites[17],
+                            BROWSER_RIGHT_BAR_X,
+                            199,
+                            0,
+                            &tbx_remap,
+                        );
+                    }
+                    let white = cached_fb.color_index([255; 3]);
+                    let yellow = cached_fb.color_index([255, 255, 85]);
+                    let panel_bg = cached_fb.color_index([140, 140, 148]);
+                    let panel_hi = cached_fb.color_index([220, 220, 228]);
+                    let panel_lo = cached_fb.color_index([64, 64, 72]);
                     *preview_cache = Some(BrowserPreviewCache {
                         puzzle_id: key.0,
                         uses_ega: key.1,
                         fb: cached_fb,
+                        tbx_remap,
                         white,
                         black,
-                        button_bgs,
+                        yellow,
+                        panel_bg,
+                        panel_hi,
+                        panel_lo,
                     });
                 }
                 let cache = preview_cache.as_ref().unwrap();
@@ -1105,24 +1286,103 @@ impl AppRenderer {
                 fb.pixels.copy_from_slice(&cache.fb.pixels);
                 let white = cache.white;
                 let black = cache.black;
+                let yellow = cache.yellow;
+                let can_resume = app.can_resume_selected();
+
+                // Right sidebar puzzle slots (`1..=15`)
+                for i in 0..BROWSER_SLOT_COUNT {
+                    let puzzle_id = i + 1;
+                    let y = BROWSER_SLOT_Y0 + (i as i32) * BROWSER_SLOT_H;
+                    let slot_target = BrowserTarget::PuzzleSlot(puzzle_id);
+                    let is_selected = app.selected_puzzle == puzzle_id;
+                    let is_hovered = app.browser_hover == Some(slot_target);
+                    let is_pressed = app.browser_pressed == Some(slot_target);
+                    if tbx.sprites.len() > 15 {
+                        fb.blit_sprite_remapped(
+                            &tbx.sprites[14 + (i & 1)],
+                            BROWSER_RIGHT_BAR_X,
+                            y,
+                            0,
+                            &cache.tbx_remap,
+                        );
+                    } else {
+                        fb.fill_rect(
+                            BROWSER_RIGHT_BAR_X,
+                            y,
+                            BROWSER_RIGHT_BAR_W,
+                            BROWSER_SLOT_H,
+                            cache.panel_bg,
+                        );
+                    }
+                    if is_selected && tbx.sprites.len() > 16 {
+                        fb.blit_sprite_remapped(
+                            &tbx.sprites[16],
+                            BROWSER_RIGHT_BAR_X + 3,
+                            y,
+                            0,
+                            &cache.tbx_remap,
+                        );
+                    }
+                    if tbx.sprites.len() > 27 {
+                        if puzzle_id < 10 {
+                            fb.blit_sprite_remapped(
+                                &tbx.sprites[18 + puzzle_id],
+                                BROWSER_RIGHT_BAR_X + 6,
+                                y + 2,
+                                0,
+                                &cache.tbx_remap,
+                            );
+                        } else {
+                            fb.blit_sprite_remapped(
+                                &tbx.sprites[18 + puzzle_id / 10],
+                                BROWSER_RIGHT_BAR_X + 4,
+                                y + 2,
+                                0,
+                                &cache.tbx_remap,
+                            );
+                            fb.blit_sprite_remapped(
+                                &tbx.sprites[18 + puzzle_id % 10],
+                                BROWSER_RIGHT_BAR_X + 9,
+                                y + 2,
+                                0,
+                                &cache.tbx_remap,
+                            );
+                        }
+                    } else {
+                        let num = format!("{puzzle_id}");
+                        fb.draw_text(&app.font, &num, BROWSER_RIGHT_BAR_X + 2, y + 2, white);
+                    }
+                    if is_pressed {
+                        fb.draw_rect_outline(
+                            BROWSER_RIGHT_BAR_X,
+                            y,
+                            BROWSER_RIGHT_BAR_W,
+                            BROWSER_SLOT_H,
+                            white,
+                        );
+                    } else if is_hovered {
+                        fb.draw_rect_outline(
+                            BROWSER_RIGHT_BAR_X,
+                            y,
+                            BROWSER_RIGHT_BAR_W,
+                            BROWSER_SLOT_H,
+                            yellow,
+                        );
+                    }
+                }
 
                 // Top banner showing puzzle title
-                fb.fill_rect(6, 4, SCREEN_W - 12, 15, black);
-                fb.draw_rect_outline(6, 4, SCREEN_W - 12, 15, white);
-                let can_resume = app.can_resume_selected();
+                fb.fill_rect(36, 4, 176, 15, black);
+                fb.draw_rect_outline(36, 4, 176, 15, white);
                 let title = if can_resume {
-                    format!("Puzzle {:02} of 15   R: restart", app.selected_puzzle)
+                    format!("Puzzle {:02} of 15  R:reset", app.selected_puzzle)
                 } else {
                     format!("Puzzle {:02} of 15", app.selected_puzzle)
                 };
-                fb.draw_text_shadowed(&app.font, &title, 14, 7, black, white);
-
-                // Bottom interactive control bar (`y = 168..198`)
-                fb.fill_rect(2, 168, SCREEN_W - 4, 30, black);
-                fb.draw_rect_outline(2, 168, SCREEN_W - 4, 30, white);
+                fb.draw_text_shadowed(&app.font, &title, 42, 7, black, white);
 
                 let pcs_label = if app.selected_grid_dim == 1 {
-                    format!("{} PARTS", app.preview_asset.preset_piece_count())
+                    format!("{} PC", app.preview_asset.preset_piece_count())
                 } else {
                     format!("{} PCS", app.selected_grid_dim * app.selected_grid_dim)
                 };
@@ -1134,33 +1394,177 @@ impl AppRenderer {
                     "SQUARE"
                 };
 
-                for (&(action, x, w, _), &bg) in BROWSER_BUTTONS.iter().zip(&cache.button_bgs) {
-                    let label = match action {
-                        BrowserAction::PrevPuzzle => "<PREV",
-                        BrowserAction::NextPuzzle => "NEXT>",
-                        BrowserAction::CyclePieces => pcs_label.as_str(),
-                        BrowserAction::ToggleEdges => edge_label,
-                        BrowserAction::OpenSetup => "SETUP",
-                        BrowserAction::StartOrResume => {
-                            if can_resume {
-                                "RESUME"
+                for btn in BROWSER_BUTTONS {
+                    let target = BrowserTarget::Button(btn.action);
+                    let is_hovered = app.browser_hover == Some(target);
+                    let is_pressed = app.browser_pressed == Some(target);
+                    match btn.action {
+                        BrowserAction::PrintPuzzle
+                        | BrowserAction::PrevPuzzle
+                        | BrowserAction::StartOrResume
+                        | BrowserAction::NextPuzzle => {
+                            if tbx.sprites.len() > 28 {
+                                fb.blit_sprite_remapped(
+                                    &tbx.sprites[28],
+                                    btn.x,
+                                    btn.y,
+                                    0,
+                                    &cache.tbx_remap,
+                                );
                             } else {
-                                "PLAY!"
+                                fb.fill_rect(btn.x, btn.y, btn.w, btn.h, cache.panel_bg);
+                                fb.draw_rect_outline(btn.x, btn.y, btn.w, btn.h, white);
+                            }
+                            let icon_spec = match btn.action {
+                                BrowserAction::PrintPuzzle => (33usize, 6, 5, "PRT"),
+                                BrowserAction::PrevPuzzle => (31, 11, 7, "<PREV"),
+                                BrowserAction::StartOrResume => (29, 12, 9, "OK"),
+                                BrowserAction::NextPuzzle => (32, 11, 7, "NEXT>"),
+                                _ => unreachable!(),
+                            };
+                            if let Some(spr) = tbx.sprites.get(icon_spec.0) {
+                                fb.blit_sprite_remapped(
+                                    spr,
+                                    btn.x + icon_spec.1,
+                                    btn.y + icon_spec.2,
+                                    0,
+                                    &cache.tbx_remap,
+                                );
+                            } else {
+                                let tw = app.font.measure_text(icon_spec.3);
+                                fb.draw_text_shadowed(
+                                    &app.font,
+                                    icon_spec.3,
+                                    btn.x + (btn.w - tw) / 2,
+                                    btn.y + 12,
+                                    black,
+                                    white,
+                                );
+                            }
+                            if btn.action == BrowserAction::StartOrResume && can_resume {
+                                let tw = app.font.measure_text("RES");
+                                fb.draw_text_shadowed(
+                                    &app.font,
+                                    "RES",
+                                    btn.x + (btn.w - tw) / 2,
+                                    btn.y + 23,
+                                    black,
+                                    yellow,
+                                );
+                            }
+                            if is_pressed {
+                                fb.draw_rect_outline(btn.x, btn.y, btn.w, btn.h, white);
+                                fb.draw_rect_outline(
+                                    btn.x + 1,
+                                    btn.y + 1,
+                                    btn.w - 2,
+                                    btn.h - 2,
+                                    black,
+                                );
+                            } else if is_hovered {
+                                fb.draw_rect_outline(btn.x, btn.y, btn.w, btn.h, yellow);
                             }
                         }
-                        BrowserAction::PrintPuzzle => "PRT",
-                        BrowserAction::QuitGame => "QUIT",
-                    };
-                    fb.fill_rect(x, 172, w, 22, bg);
-                    fb.draw_rect_outline(x, 172, w, 22, white);
-                    let tw = app.font.measure_text(label);
-                    let tx = x + (w - tw) / 2;
-                    fb.draw_text_shadowed(&app.font, label, tx.max(x + 2), 178, black, white);
+                        BrowserAction::OpenSetup
+                        | BrowserAction::QuitGame
+                        | BrowserAction::CyclePieces
+                        | BrowserAction::ToggleEdges => {
+                            fb.fill_rect(btn.x, btn.y, btn.w, btn.h, cache.panel_bg);
+                            let (tl, br) = if is_pressed {
+                                (cache.panel_lo, cache.panel_hi)
+                            } else {
+                                (cache.panel_hi, cache.panel_lo)
+                            };
+                            fb.fill_rect(btn.x, btn.y, btn.w, 1, tl);
+                            fb.fill_rect(btn.x, btn.y, 1, btn.h, tl);
+                            fb.fill_rect(btn.x, btn.y + btn.h - 1, btn.w, 1, br);
+                            fb.fill_rect(btn.x + btn.w - 1, btn.y, 1, btn.h, br);
+                            if is_pressed {
+                                fb.draw_rect_outline(btn.x, btn.y, btn.w, btn.h, white);
+                            } else if is_hovered {
+                                fb.draw_rect_outline(btn.x, btn.y, btn.w, btn.h, yellow);
+                            }
+                            match btn.action {
+                                BrowserAction::OpenSetup => {
+                                    let tw = app.font.measure_text("SETUP");
+                                    fb.draw_text_shadowed(
+                                        &app.font,
+                                        "SETUP",
+                                        btn.x + (btn.w - tw) / 2,
+                                        btn.y + 4,
+                                        black,
+                                        white,
+                                    );
+                                }
+                                BrowserAction::QuitGame => {
+                                    if let Some(spr) = tbx.sprites.get(55) {
+                                        let sx = btn.x + (btn.w - spr.width as i32) / 2;
+                                        let sy = btn.y + (btn.h - spr.sub_h as i32) / 2;
+                                        fb.blit_sprite_remapped(spr, sx, sy, 0, &cache.tbx_remap);
+                                    } else {
+                                        let tw = app.font.measure_text("QUIT");
+                                        fb.draw_text_shadowed(
+                                            &app.font,
+                                            "QUIT",
+                                            btn.x + (btn.w - tw) / 2,
+                                            btn.y + 4,
+                                            black,
+                                            white,
+                                        );
+                                    }
+                                }
+                                BrowserAction::CyclePieces => {
+                                    let count_idx = (2..=8)
+                                        .contains(&app.selected_grid_dim)
+                                        .then(|| 34 + app.selected_grid_dim - 2);
+                                    if let Some(spr) = count_idx.and_then(|i| tbx.sprites.get(i)) {
+                                        fb.blit_sprite_remapped(
+                                            spr,
+                                            btn.x + 4,
+                                            btn.y + 2,
+                                            0,
+                                            &cache.tbx_remap,
+                                        );
+                                        fb.draw_text_shadowed(
+                                            &app.font,
+                                            "PCS",
+                                            btn.x + 28,
+                                            btn.y + 4,
+                                            black,
+                                            white,
+                                        );
+                                    } else {
+                                        let tw = app.font.measure_text(&pcs_label);
+                                        fb.draw_text_shadowed(
+                                            &app.font,
+                                            &pcs_label,
+                                            btn.x + (btn.w - tw) / 2,
+                                            btn.y + 4,
+                                            black,
+                                            white,
+                                        );
+                                    }
+                                }
+                                BrowserAction::ToggleEdges => {
+                                    let tw = app.font.measure_text(edge_label);
+                                    fb.draw_text_shadowed(
+                                        &app.font,
+                                        edge_label,
+                                        btn.x + (btn.w - tw) / 2,
+                                        btn.y + 4,
+                                        black,
+                                        white,
+                                    );
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
                 }
                 if let Some((ref status, _)) = app.browser_status {
-                    fb.fill_rect(4, 152, SCREEN_W - 8, 16, black);
-                    fb.draw_rect_outline(4, 152, SCREEN_W - 8, 16, white);
-                    fb.draw_text(&app.font, status, 8, 156, white);
+                    fb.fill_rect(36, 140, 264, 16, black);
+                    fb.draw_rect_outline(36, 140, 264, 16, white);
+                    fb.draw_text(&app.font, status, 40, 144, white);
                 }
             }
             AppScreen::Playing => {
