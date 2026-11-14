@@ -1,6 +1,6 @@
 //! Application state machine, input handling, and software presentation layer.
 //!
-//! Kept independent of `macroquad` so all screen transitions, input handling,
+//! Kept independent of windowing/GPU backends so all screen transitions, input handling,
 //! cache invalidation, and framebuffer rendering can be tested headlessly.
 
 use std::path::PathBuf;
@@ -237,6 +237,7 @@ pub struct AppInput {
     pub left_pressed: bool,
     pub left_released: bool,
     pub right_pressed: bool,
+    pub pointer_canceled: bool,
     pub wheel_delta: i32,
     pub up: bool,
     pub down: bool,
@@ -858,6 +859,13 @@ impl GameApp {
     }
 
     fn process_input(&mut self, input: &AppInput, dt: f32) {
+        if input.pointer_canceled {
+            self.browser_pressed = None;
+            self.in_game_menu_pressed = None;
+            if let Some(session) = &mut self.session {
+                session.cancel_pointer_drag();
+            }
+        }
         // Global shortcut F4 opens Setup from anywhere
         if input.f4 && !matches!(self.screen, AppScreen::Setup { .. }) {
             if let Some(session) = &mut self.session {
@@ -1384,7 +1392,7 @@ impl AppRenderer {
         }
     }
 
-    fn cursor_hotspot(sprite_idx: usize) -> (i32, i32) {
+    pub(crate) fn cursor_hotspot(sprite_idx: usize) -> (i32, i32) {
         match sprite_idx {
             62 => (-6, 0),
             63 => (-10, 0),
@@ -1477,6 +1485,170 @@ impl AppRenderer {
         }
     }
 
+    /// Renders a cursor sprite (`62`, `63`, `64`) into `rgba_out` with transparent background.
+    /// Returns `Some((w, h))` on success.
+    pub fn render_cursor_rgba(
+        app: &GameApp,
+        sprite_idx: usize,
+        rgba_out: &mut Vec<u8>,
+    ) -> Option<(i32, i32)> {
+        let sprite = app.tbx.sprites.get(sprite_idx)?;
+        let w = sprite.width as i32;
+        let h = sprite.height as i32;
+        let stride = sprite.stride as usize;
+        rgba_out.clear();
+        rgba_out.resize((w * h * 4) as usize, 0);
+        for sy in 0..h {
+            let row_off = sy as usize * stride;
+            let dst_row = (sy as usize) * (w as usize) * 4;
+            for sx in 0..w {
+                let idx = row_off + sx as usize;
+                let opaque = sprite
+                    .opacity
+                    .as_ref()
+                    .and_then(|op| op.get(idx).copied())
+                    .unwrap_or_else(|| sprite.pixels[idx] != sprite.transparent_color);
+                if !opaque {
+                    continue;
+                }
+                let rgb = app.tbx.palette[sprite.pixels[idx] as usize];
+                let d = dst_row + (sx as usize) * 4;
+                rgba_out[d] = rgb[0];
+                rgba_out[d + 1] = rgb[1];
+                rgba_out[d + 2] = rgb[2];
+                rgba_out[d + 3] = 255;
+            }
+        }
+        Some((w, h))
+    }
+
+    fn update_base_rgba(
+        &mut self,
+        app: &GameApp,
+        mx: i32,
+        my: i32,
+        show_reference: bool,
+        picture_guide: bool,
+    ) -> bool {
+        let sig = app.present_signature(mx, my, show_reference, picture_guide);
+        let base_dirty = sig.is_none() || sig != self.last_present_sig;
+        if !base_dirty {
+            return false;
+        }
+        if show_reference && let Some(session) = &app.session {
+            self.puzzle_renderer.render_reference(session, &mut self.fb);
+        } else {
+            self.render(app, mx, my);
+        }
+
+        self.fb.to_rgba8(&mut self.base_rgba_buf);
+        if picture_guide
+            && !show_reference
+            && app.screen == AppScreen::Playing
+            && let Some(session) = &app.session
+        {
+            let (px, py) = session.active_pointer(mx, my);
+            self.puzzle_renderer
+                .blend_picture_guide(session, &mut self.base_rgba_buf, px, py);
+        }
+        self.last_present_sig = sig;
+        true
+    }
+
+    /// Renders only the base frame (no cursor) into `self.base_rgba_buf` when `present_signature`
+    /// changes. Used by the GPU-composited SDL3 backend for non-board screens, animations, and menus.
+    pub fn render_base_only(
+        &mut self,
+        app: &GameApp,
+        mx: i32,
+        my: i32,
+        show_reference: bool,
+        picture_guide: bool,
+    ) -> bool {
+        self.update_base_rgba(app, mx, my, show_reference, picture_guide)
+    }
+
+    pub fn base_rgba(&self) -> &[u8] {
+        &self.base_rgba_buf
+    }
+
+    /// Renders interactive-board overlays (`status_message`, `caption`, `app.error`) into a
+    /// `320x200x4` transparent RGBA8 buffer. Returns `false` if no overlay is active.
+    pub fn render_playing_overlay_rgba(&mut self, app: &GameApp, rgba_out: &mut [u8]) -> bool {
+        assert_eq!(rgba_out.len(), (SCREEN_W * SCREEN_H * 4) as usize);
+        let sess = match &app.session {
+            Some(s) => s,
+            None => return false,
+        };
+        let status = sess.status_message();
+        let caption = (app.prefs.text_msg_on != 0)
+            .then(|| app.audio.common_caption())
+            .flatten();
+        let has_error = app.error.is_some();
+        if status.is_none() && caption.is_none() && !has_error {
+            return false;
+        }
+
+        self.scratch_fb.reset_clip();
+        self.scratch_fb.palette = sess.asset.palette;
+        let black = self.scratch_fb.color_index([0; 3]);
+        let white = self.scratch_fb.color_index([255; 3]);
+        let yellow = self.scratch_fb.color_index([255, 255, 85]);
+        // Pick a sentinel byte distinct from all colors drawn in this overlay.
+        let sentinel = (0u8..=255)
+            .find(|&c| c != black && c != white && c != yellow)
+            .unwrap_or(255);
+        self.scratch_fb.clear(sentinel);
+
+        if let Some(status) = status {
+            self.scratch_fb.draw_text_shadowed(
+                &app.font,
+                status,
+                sess.playfield_x() + 6,
+                186,
+                black,
+                yellow,
+            );
+        }
+        if let Some(caption) = caption {
+            let line_count = caption.split('\r').count() as i32;
+            let height = line_count * app.font.height as i32 + 8;
+            let y = 164 - height;
+            self.scratch_fb.fill_rect(4, y, SCREEN_W - 8, height, white);
+            self.scratch_fb
+                .draw_rect_outline(4, y, SCREEN_W - 8, height, black);
+            for (row, line) in caption.split('\r').enumerate() {
+                let x = (SCREEN_W - app.font.measure_text(line)) / 2;
+                self.scratch_fb.draw_text(
+                    &app.font,
+                    line,
+                    x,
+                    y + 4 + row as i32 * app.font.height as i32,
+                    black,
+                );
+            }
+        }
+        if has_error {
+            self.scratch_fb.fill_rect(0, 20, SCREEN_W, 26, black);
+            self.scratch_fb
+                .draw_text(&app.font, "Asset load failed (see terminal)", 5, 23, white);
+        }
+
+        for (i, &px) in self.scratch_fb.pixels.iter().enumerate() {
+            let d = i * 4;
+            if px == sentinel {
+                rgba_out[d..d + 4].copy_from_slice(&[0, 0, 0, 0]);
+            } else {
+                let rgb = self.scratch_fb.palette[px as usize];
+                rgba_out[d] = rgb[0];
+                rgba_out[d + 1] = rgb[1];
+                rgba_out[d + 2] = rgb[2];
+                rgba_out[d + 3] = 255;
+            }
+        }
+        true
+    }
+
     /// Renders the current frame into `self.rgba_buf` only if `present_signature` or cursor changed.
     /// Returns `true` when `rgba_buf` was updated.
     pub fn render_if_needed(
@@ -1487,30 +1659,10 @@ impl AppRenderer {
         show_reference: bool,
         picture_guide: bool,
     ) -> bool {
-        let sig = app.present_signature(mx, my, show_reference, picture_guide);
         let cursor_sig = Self::desired_cursor(app, mx, my, show_reference);
-        let base_dirty = sig.is_none() || sig != self.last_present_sig;
+        let base_dirty = self.update_base_rgba(app, mx, my, show_reference, picture_guide);
         if !base_dirty && cursor_sig == self.last_cursor_sig {
             return false;
-        }
-        if base_dirty {
-            if show_reference && let Some(session) = &app.session {
-                self.puzzle_renderer.render_reference(session, &mut self.fb);
-            } else {
-                self.render(app, mx, my);
-            }
-
-            self.fb.to_rgba8(&mut self.base_rgba_buf);
-            if picture_guide
-                && !show_reference
-                && app.screen == AppScreen::Playing
-                && let Some(session) = &app.session
-            {
-                let (px, py) = session.active_pointer(mx, my);
-                self.puzzle_renderer
-                    .blend_picture_guide(session, &mut self.base_rgba_buf, px, py);
-            }
-            self.last_present_sig = sig;
         }
         self.rgba_buf.copy_from_slice(&self.base_rgba_buf);
         if let Some((sprite_idx, px, py)) = cursor_sig {

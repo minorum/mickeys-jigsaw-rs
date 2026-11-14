@@ -516,32 +516,7 @@ impl PuzzleRenderer {
         if session.toolbox_open {
             self.ensure_toolbox(session, fb, tbx, font, pointer_x, pointer_y);
         } else {
-            let hovered =
-                session.toolbox_target_at(pointer_x, pointer_y) == Some(ToolboxTarget::ClosedTab);
-            let pressed = session.pressed_toolbox_target == Some(ToolboxTarget::ClosedTab);
-            if let Some(icon) = tbx.sprites.get(49) {
-                fb.blit_sprite_remapped(icon, 2, 2, 0, &self.tbx_remap);
-            } else {
-                draw_beveled_box(
-                    fb,
-                    2,
-                    2,
-                    16,
-                    13,
-                    colors.card,
-                    colors.hi,
-                    colors.lo,
-                    pressed,
-                    hovered,
-                    colors.yellow,
-                    colors.white,
-                );
-            }
-            if pressed {
-                fb.draw_rect_outline(2, 2, 16, 13, colors.white);
-            } else if hovered {
-                fb.draw_rect_outline(2, 2, 16, 13, colors.yellow);
-            }
+            self.draw_closed_tab(session, fb, tbx, pointer_x, pointer_y);
         }
 
         // Draw status message if active
@@ -661,6 +636,240 @@ impl PuzzleRenderer {
         }
     }
 
+    fn draw_closed_tab(
+        &self,
+        session: &PuzzleSession,
+        fb: &mut Framebuffer,
+        tbx: &ToolboxAsset,
+        pointer_x: i32,
+        pointer_y: i32,
+    ) {
+        let colors = self.ui_colors;
+        let hovered =
+            session.toolbox_target_at(pointer_x, pointer_y) == Some(ToolboxTarget::ClosedTab);
+        let pressed = session.pressed_toolbox_target == Some(ToolboxTarget::ClosedTab);
+        if let Some(icon) = tbx.sprites.get(49) {
+            fb.blit_sprite_remapped(icon, 2, 2, 0, &self.tbx_remap);
+        } else {
+            draw_beveled_box(
+                fb,
+                2,
+                2,
+                16,
+                13,
+                colors.card,
+                colors.hi,
+                colors.lo,
+                pressed,
+                hovered,
+                colors.yellow,
+                colors.white,
+            );
+        }
+        if pressed {
+            fb.draw_rect_outline(2, 2, 16, 13, colors.white);
+        } else if hovered {
+            fb.draw_rect_outline(2, 2, 16, 13, colors.yellow);
+        }
+    }
+
+    /// Renders the static board layer (with optional picture guide baked in) into `rgba_out` (320x200x4).
+    pub fn render_board_layer_rgba(
+        &mut self,
+        session: &PuzzleSession,
+        tbx: &ToolboxAsset,
+        picture_guide: bool,
+        rgba_out: &mut [u8],
+    ) {
+        assert_eq!(rgba_out.len(), (SCREEN_W * SCREEN_H * 4) as usize);
+        self.sync_asset(session, Some(tbx));
+        let colors = self.ui_colors;
+        let board_key = BoardStateKey {
+            session_id: session.session_id(),
+            asset_rev: session.asset_rev(),
+            board_rev: session.board_rev(),
+        };
+        let board = self.ensure_board_fb(board_key, session, tbx, colors);
+        board.to_rgba8(rgba_out);
+
+        if picture_guide && !session.solved && session.grid_dim != 1 {
+            let pfx = session.playfield_x();
+            let pfy = session.playfield_y();
+            let bg_rgb = session.asset.palette[colors.board_bg as usize];
+            let bg_rgba = [bg_rgb[0], bg_rgb[1], bg_rgb[2], 255];
+            self.ensure_placed_mask(board_key, session);
+            let placed_cov = &self.placed_mask.as_ref().unwrap().1;
+            let (rgba_chunks, _) = rgba_out.as_chunks_mut::<4>();
+            let pw = PLAYFIELD_W as usize;
+            for y in 0..PLAYFIELD_H {
+                let cov_row = (y as usize) * pw;
+                let rgba_row = ((pfy + y) as usize) * 320 + pfx as usize;
+                apply_guide_span(
+                    &mut rgba_chunks[rgba_row..rgba_row + pw],
+                    &self.guide_playfield[cov_row..cov_row + pw],
+                    &placed_cov[cov_row..cov_row + pw],
+                    bg_rgba,
+                );
+            }
+        }
+    }
+
+    /// Renders the open toolbox strip (`46x200` at `(0, 0)`) or closed tab (`16x13` at `(2, 2)`)
+    /// into `rgba_out`, returning `(x, y, w, h)`.
+    pub fn render_toolbox_layer_rgba(
+        &mut self,
+        session: &PuzzleSession,
+        tbx: &ToolboxAsset,
+        font: &FontAsset,
+        pointer_x: i32,
+        pointer_y: i32,
+        rgba_out: &mut Vec<u8>,
+    ) -> (i32, i32, i32, i32) {
+        self.sync_asset(session, Some(tbx));
+        let mut fb = std::mem::replace(&mut self.scratch_fb, Box::new(Framebuffer::new()));
+        fb.reset_clip();
+        fb.palette = session.asset.palette;
+
+        let (rx, ry, rw, rh) = if session.toolbox_open {
+            self.ensure_toolbox(session, &mut fb, tbx, font, pointer_x, pointer_y);
+            (0, 0, TOOLBOX_STRIP_W as i32, SCREEN_H)
+        } else {
+            fb.fill_rect(2, 2, 16, 13, self.ui_colors.black);
+            self.draw_closed_tab(session, &mut fb, tbx, pointer_x, pointer_y);
+            (2, 2, 16, 13)
+        };
+
+        let len = (rw * rh * 4) as usize;
+        rgba_out.resize(len, 0);
+        for y in 0..rh {
+            let src_row = ((ry + y) as usize) * (SCREEN_W as usize) + (rx as usize);
+            let dst_row = (y as usize) * (rw as usize) * 4;
+            for x in 0..rw as usize {
+                let rgb = fb.palette[fb.pixels[src_row + x] as usize];
+                let d = dst_row + x * 4;
+                rgba_out[d] = rgb[0];
+                rgba_out[d + 1] = rgb[1];
+                rgba_out[d + 2] = rgb[2];
+                rgba_out[d + 3] = 255;
+            }
+        }
+        self.scratch_fb = fb;
+        (rx, ry, rw, rh)
+    }
+
+    /// Rasterizes the currently held piece (or connected group) into a tight transparent RGBA8 buffer.
+    /// Returns `(rel_x, rel_y, w, h)` relative to `(pointer_x - anchor.base_w / 2, pointer_y - anchor.base_h / 2)`.
+    pub fn render_held_group_layer_rgba(
+        &self,
+        session: &PuzzleSession,
+        pointer_x: i32,
+        pointer_y: i32,
+        rgba_out: &mut Vec<u8>,
+    ) -> Option<(i32, i32, i32, i32)> {
+        let _ = session.held_piece?;
+        let offsets = session.held_group_offsets_at(pointer_x, pointer_y);
+        if offsets.is_empty() {
+            return None;
+        }
+        let mut min_x = i32::MAX;
+        let mut min_y = i32::MAX;
+        let mut max_x = i32::MIN;
+        let mut max_y = i32::MIN;
+        for &(gp_idx, cell_dx, cell_dy) in &offsets {
+            let piece = &session.pieces[gp_idx];
+            let rx = cell_dx + piece.target_x - piece.base_x;
+            let ry = cell_dy + piece.target_y - piece.base_y;
+            min_x = min_x.min(rx);
+            min_y = min_y.min(ry);
+            max_x = max_x.max(rx + piece.sprite.width as i32);
+            max_y = max_y.max(ry + piece.sprite.sub_h as i32);
+        }
+        let w = (max_x - min_x).max(1);
+        let h = (max_y - min_y).max(1);
+        rgba_out.clear();
+        rgba_out.resize((w * h * 4) as usize, 0);
+
+        let palette = &session.asset.palette;
+        for &(gp_idx, cell_dx, cell_dy) in &offsets {
+            let piece = &session.pieces[gp_idx];
+            let rx = cell_dx + piece.target_x - piece.base_x - min_x;
+            let ry = cell_dy + piece.target_y - piece.base_y - min_y;
+            let spr = &piece.sprite;
+            let sw = spr.width as i32;
+            let sh = spr.sub_h as i32;
+            for sy in 0..sh {
+                let dy = ry + sy;
+                if !(0..h).contains(&dy) {
+                    continue;
+                }
+                let src_row =
+                    (spr.sub_y as usize + sy as usize) * spr.stride as usize + spr.sub_x as usize;
+                let dst_row = (dy as usize) * (w as usize) * 4;
+                for sx in 0..sw {
+                    let dx = rx + sx;
+                    if !(0..w).contains(&dx) {
+                        continue;
+                    }
+                    let idx = src_row + sx as usize;
+                    if !spr.is_opaque(idx) {
+                        continue;
+                    }
+                    let rgb = palette[spr.pixels[idx] as usize];
+                    let d = dst_row + (dx as usize) * 4;
+                    rgba_out[d] = rgb[0];
+                    rgba_out[d + 1] = rgb[1];
+                    rgba_out[d + 2] = rgb[2];
+                    rgba_out[d + 3] = 255;
+                }
+            }
+        }
+        Some((min_x, min_y, w, h))
+    }
+
+    /// Rasterizes the active hint piece silhouette as white `(255, 255, 255, 255)` clipped to the
+    /// playfield, so the GPU can tint it white/red with `color_mod` without re-uploading.
+    pub fn render_hint_layer_rgba(
+        &self,
+        session: &PuzzleSession,
+        rgba_out: &mut Vec<u8>,
+    ) -> Option<(i32, i32, i32, i32)> {
+        let (hidx, _) = session.hint_piece?;
+        let piece = session.pieces.get(hidx)?;
+        let pfx = session.playfield_x();
+        let pfy = session.playfield_y();
+        let spr = &piece.sprite;
+        let px = pfx + piece.target_x;
+        let py = pfy + piece.target_y;
+        let x0 = px.max(pfx);
+        let y0 = py.max(pfy);
+        let x1 = (px + spr.width as i32).min(pfx + PLAYFIELD_W);
+        let y1 = (py + spr.sub_h as i32).min(pfy + PLAYFIELD_H);
+        let w = x1 - x0;
+        let h = y1 - y0;
+        if w <= 0 || h <= 0 {
+            return None;
+        }
+        rgba_out.clear();
+        rgba_out.resize((w * h * 4) as usize, 0);
+        for dy in 0..h {
+            let sy = (y0 + dy) - py;
+            let src_row =
+                (spr.sub_y as usize + sy as usize) * spr.stride as usize + spr.sub_x as usize;
+            let dst_row = (dy as usize) * (w as usize) * 4;
+            for dx in 0..w {
+                let sx = (x0 + dx) - px;
+                if spr.is_opaque(src_row + sx as usize) {
+                    let d = dst_row + (dx as usize) * 4;
+                    rgba_out[d] = 255;
+                    rgba_out[d + 1] = 255;
+                    rgba_out[d + 2] = 255;
+                    rgba_out[d + 3] = 255;
+                }
+            }
+        }
+        Some((x0, y0, w, h))
+    }
+
     fn ensure_toolbox(
         &mut self,
         session: &PuzzleSession,
@@ -755,7 +964,9 @@ impl PuzzleRenderer {
         );
         if let Some(icon) = tbx.sprites.get(49) {
             fb.blit_sprite_remapped(icon, 3, 2, 0, &self.tbx_remap);
+            fb.set_clip(2, 0, TOOLBOX_W - 4, SCREEN_H);
             fb.draw_text(font, "MENU", 20, 4, colors.white);
+            fb.reset_clip();
         } else {
             fb.draw_text(font, "MENU", 8, 4, colors.white);
         }

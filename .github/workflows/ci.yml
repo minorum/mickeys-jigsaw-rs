@@ -8,17 +8,20 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    container: ubuntu:25.04
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Linux audio/windowing dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            build-essential \
+            pkg-config \
             libasound2-dev \
-            libx11-dev \
-            libxi-dev \
-            libgl1-mesa-dev
+            libsdl3-dev
 
       - uses: dtolnay/rust-toolchain@stable
         with:
