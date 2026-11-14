@@ -21,15 +21,19 @@ pub enum BrowserAction {
     ToggleEdges,
     OpenSetup,
     StartOrResume,
+    PrintPuzzle,
+    QuitGame,
 }
 
-pub const BROWSER_BUTTONS: [(BrowserAction, i32, i32, [u8; 3]); 6] = [
-    (BrowserAction::PrevPuzzle, 6, 38, [0, 0, 170]),
-    (BrowserAction::NextPuzzle, 48, 38, [0, 0, 170]),
-    (BrowserAction::CyclePieces, 90, 68, [170, 0, 0]),
-    (BrowserAction::ToggleEdges, 162, 60, [170, 0, 170]),
-    (BrowserAction::OpenSetup, 226, 40, [85, 85, 85]),
-    (BrowserAction::StartOrResume, 268, 48, [0, 170, 0]),
+pub const BROWSER_BUTTONS: [(BrowserAction, i32, i32, [u8; 3]); 8] = [
+    (BrowserAction::PrevPuzzle, 4, 34, [0, 0, 170]),
+    (BrowserAction::NextPuzzle, 40, 34, [0, 0, 170]),
+    (BrowserAction::CyclePieces, 76, 46, [170, 0, 0]),
+    (BrowserAction::ToggleEdges, 124, 48, [170, 0, 170]),
+    (BrowserAction::OpenSetup, 174, 38, [85, 85, 85]),
+    (BrowserAction::StartOrResume, 214, 40, [0, 170, 0]),
+    (BrowserAction::PrintPuzzle, 256, 32, [0, 140, 140]),
+    (BrowserAction::QuitGame, 290, 28, [170, 40, 40]),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,6 +91,7 @@ pub struct AppInput {
     pub key_s: bool,
     pub key_g: bool,
     pub key_p: bool,
+    pub key_q: bool,
     pub key_t: bool,
     pub key_m: bool,
     pub f1: bool,
@@ -159,6 +164,8 @@ pub struct GameApp {
     pub session: Option<PuzzleSession>,
     pub session_use_ega: bool,
     pub confirm_exit_puzzle: bool,
+    pub browser_status: Option<(String, f32)>,
+    pub quit_requested: bool,
     pub error: Option<String>,
 
     app_rev: u64,
@@ -219,6 +226,8 @@ impl GameApp {
             session: None,
             session_use_ega: use_ega,
             confirm_exit_puzzle: false,
+            browser_status: None,
+            quit_requested: false,
             error: None,
             app_rev: 1,
         })
@@ -263,6 +272,8 @@ impl GameApp {
             session: None,
             session_use_ega: use_ega,
             confirm_exit_puzzle: false,
+            browser_status: None,
+            quit_requested: false,
             error: None,
             app_rev: 1,
         }
@@ -465,6 +476,31 @@ impl GameApp {
         self.bump_rev();
     }
 
+    pub fn print_selected_puzzle(&mut self) {
+        let msg = match crate::puzzle::export_print_pbm(&self.game_dir, self.selected_puzzle) {
+            Ok(ok_msg) => {
+                self.audio.play_common(CommonSound::UiClick);
+                ok_msg
+            }
+            Err(err_msg) => {
+                self.audio.play_error();
+                err_msg
+            }
+        };
+        self.browser_status = Some((msg, 3.0));
+        self.bump_rev();
+    }
+
+    pub fn request_quit(&mut self) {
+        self.audio.play_common(CommonSound::Quit);
+        self.quit_requested = true;
+        self.bump_rev();
+    }
+
+    pub fn has_mickey_cursor(&self) -> bool {
+        self.tbx.sprites.get(61).is_some()
+    }
+
     pub fn open_setup(&mut self, return_to_playing: bool) {
         self.setup_menu.set_prefs(self.prefs);
         self.setup_menu.clear_error();
@@ -574,6 +610,13 @@ impl GameApp {
                 }
             }
             AppScreen::Browser => {
+                if let Some((_, ref mut timer)) = self.browser_status {
+                    *timer -= dt;
+                    if *timer <= 0.0 {
+                        self.browser_status = None;
+                        self.bump_rev();
+                    }
+                }
                 if input.left {
                     self.step_puzzle(-1);
                 } else if input.right {
@@ -590,6 +633,10 @@ impl GameApp {
                     self.restart_selected_puzzle();
                 } else if input.key_s {
                     self.open_setup(false);
+                } else if input.key_p {
+                    self.print_selected_puzzle();
+                } else if input.escape || input.key_q {
+                    self.request_quit();
                 } else if input.left_pressed {
                     self.handle_browser_click(input.pointer_x, input.pointer_y);
                 }
@@ -776,6 +823,8 @@ impl GameApp {
                             self.open_setup(false);
                         }
                         BrowserAction::StartOrResume => self.start_selected_puzzle(),
+                        BrowserAction::PrintPuzzle => self.print_selected_puzzle(),
+                        BrowserAction::QuitGame => self.request_quit(),
                     }
                     return;
                 }
@@ -831,10 +880,12 @@ impl GameApp {
 pub struct AppRenderer {
     pub fb: Framebuffer,
     pub rgba_buf: Vec<u8>,
+    base_rgba_buf: Vec<u8>,
     scratch_fb: Box<Framebuffer>,
     preview_cache: Option<BrowserPreviewCache>,
     pub puzzle_renderer: PuzzleRenderer,
     last_present_sig: Option<PresentSignature>,
+    last_cursor_sig: Option<(usize, i32, i32)>,
 }
 
 impl Default for AppRenderer {
@@ -845,17 +896,87 @@ impl Default for AppRenderer {
 
 impl AppRenderer {
     pub fn new() -> Self {
+        let buf_len = (SCREEN_W as usize) * (SCREEN_H as usize) * 4;
         Self {
             fb: Framebuffer::new(),
-            rgba_buf: vec![0u8; (SCREEN_W as usize) * (SCREEN_H as usize) * 4],
+            rgba_buf: vec![0u8; buf_len],
+            base_rgba_buf: vec![0u8; buf_len],
             scratch_fb: Box::new(Framebuffer::new()),
             preview_cache: None,
             puzzle_renderer: PuzzleRenderer::new(),
             last_present_sig: None,
+            last_cursor_sig: None,
         }
     }
 
-    /// Renders the current frame into `self.rgba_buf` only if `present_signature` changed.
+    fn desired_cursor(
+        app: &GameApp,
+        mx: i32,
+        my: i32,
+        show_reference: bool,
+    ) -> Option<(usize, i32, i32)> {
+        if show_reference {
+            return None;
+        }
+        let (px, py) = if app.screen == AppScreen::Playing {
+            app.session
+                .as_ref()
+                .map_or((mx, my), |s| s.active_pointer(mx, my))
+        } else {
+            (mx, my)
+        };
+        if !(0..SCREEN_W).contains(&px) || !(0..SCREEN_H).contains(&py) {
+            return None;
+        }
+        let sprite_idx = if app.screen == AppScreen::Playing
+            && app.session.as_ref().is_some_and(|s| s.held_piece.is_some())
+        {
+            62
+        } else {
+            61
+        };
+        app.tbx.sprites.get(sprite_idx)?;
+        Some((sprite_idx, px, py))
+    }
+
+    fn blit_cursor_rgba(&mut self, app: &GameApp, sprite_idx: usize, px: i32, py: i32) {
+        let Some(sprite) = app.tbx.sprites.get(sprite_idx) else {
+            return;
+        };
+        let w = sprite.width as i32;
+        let h = sprite.height as i32;
+        let stride = sprite.stride as usize;
+        for sy in 0..h {
+            let dy = py + sy;
+            if !(0..SCREEN_H).contains(&dy) {
+                continue;
+            }
+            let row_off = sy as usize * stride;
+            for sx in 0..w {
+                let dx = px + sx;
+                if !(0..SCREEN_W).contains(&dx) {
+                    continue;
+                }
+                let idx = row_off + sx as usize;
+                let opaque = sprite
+                    .opacity
+                    .as_ref()
+                    .and_then(|op| op.get(idx).copied())
+                    .unwrap_or_else(|| sprite.pixels[idx] != sprite.transparent_color);
+                if !opaque {
+                    continue;
+                }
+                let rgb = app.tbx.palette[sprite.pixels[idx] as usize];
+                let dst = ((dy as usize * SCREEN_W as usize) + dx as usize) * 4;
+                self.rgba_buf[dst] = rgb[0];
+                self.rgba_buf[dst + 1] = rgb[1];
+                self.rgba_buf[dst + 2] = rgb[2];
+                self.rgba_buf[dst + 3] = 255;
+            }
+        }
+    }
+
+    /// Renders the current frame into `self.rgba_buf` only if `present_signature` or cursor changed.
     /// Returns `true` when `rgba_buf` was updated.
     pub fn render_if_needed(
         &mut self,
@@ -866,26 +987,35 @@ impl AppRenderer {
         picture_guide: bool,
     ) -> bool {
         let sig = app.present_signature(mx, my, show_reference, picture_guide);
-        if sig.is_some() && sig == self.last_present_sig {
+        let cursor_sig = Self::desired_cursor(app, mx, my, show_reference);
+        let base_dirty = sig.is_none() || sig != self.last_present_sig;
+        if !base_dirty && cursor_sig == self.last_cursor_sig {
             return false;
         }
-        if show_reference && let Some(session) = &app.session {
-            self.puzzle_renderer.render_reference(session, &mut self.fb);
-        } else {
-            self.render(app, mx, my);
-        }
+        if base_dirty {
+            if show_reference && let Some(session) = &app.session {
+                self.puzzle_renderer.render_reference(session, &mut self.fb);
+            } else {
+                self.render(app, mx, my);
+            }
 
-        self.fb.to_rgba8(&mut self.rgba_buf);
-        if picture_guide
-            && !show_reference
-            && app.screen == AppScreen::Playing
-            && let Some(session) = &app.session
-        {
-            let (px, py) = session.active_pointer(mx, my);
-            self.puzzle_renderer
-                .blend_picture_guide(session, &mut self.rgba_buf, px, py);
+            self.fb.to_rgba8(&mut self.base_rgba_buf);
+            if picture_guide
+                && !show_reference
+                && app.screen == AppScreen::Playing
+                && let Some(session) = &app.session
+            {
+                let (px, py) = session.active_pointer(mx, my);
+                self.puzzle_renderer
+                    .blend_picture_guide(session, &mut self.base_rgba_buf, px, py);
+            }
+            self.last_present_sig = sig;
         }
-        self.last_present_sig = sig;
+        self.rgba_buf.copy_from_slice(&self.base_rgba_buf);
+        if let Some((sprite_idx, px, py)) = cursor_sig {
+            self.blit_cursor_rgba(app, sprite_idx, px, py);
+        }
+        self.last_cursor_sig = cursor_sig;
         true
     }
 
@@ -975,7 +1105,7 @@ impl AppRenderer {
                     format!("{} PCS", app.selected_grid_dim * app.selected_grid_dim)
                 };
                 let edge_label = if app.selected_grid_dim == 1 {
-                    "ORIGINAL"
+                    "ORIG"
                 } else if app.curved_edges {
                     "CURVED"
                 } else {
@@ -984,8 +1114,8 @@ impl AppRenderer {
 
                 for (&(action, x, w, _), &bg) in BROWSER_BUTTONS.iter().zip(&cache.button_bgs) {
                     let label = match action {
-                        BrowserAction::PrevPuzzle => "< PREV",
-                        BrowserAction::NextPuzzle => "NEXT >",
+                        BrowserAction::PrevPuzzle => "<PREV",
+                        BrowserAction::NextPuzzle => "NEXT>",
                         BrowserAction::CyclePieces => pcs_label.as_str(),
                         BrowserAction::ToggleEdges => edge_label,
                         BrowserAction::OpenSetup => "SETUP",
@@ -996,12 +1126,19 @@ impl AppRenderer {
                                 "PLAY!"
                             }
                         }
+                        BrowserAction::PrintPuzzle => "PRT",
+                        BrowserAction::QuitGame => "QUIT",
                     };
                     fb.fill_rect(x, 172, w, 22, bg);
                     fb.draw_rect_outline(x, 172, w, 22, white);
                     let tw = app.font.measure_text(label);
                     let tx = x + (w - tw) / 2;
                     fb.draw_text_shadowed(&app.font, label, tx.max(x + 2), 178, black, white);
+                }
+                if let Some((ref status, _)) = app.browser_status {
+                    fb.fill_rect(4, 152, SCREEN_W - 8, 16, black);
+                    fb.draw_rect_outline(4, 152, SCREEN_W - 8, 16, white);
+                    fb.draw_text(&app.font, status, 8, 156, white);
                 }
             }
             AppScreen::Playing => {

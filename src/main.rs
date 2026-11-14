@@ -184,6 +184,7 @@ fn poll_app_input(dt: f32, mx: i32, my: i32, inside: bool) -> AppInput {
         key_s: is_key_pressed(KeyCode::S),
         key_g: is_key_pressed(KeyCode::G),
         key_p: is_key_pressed(KeyCode::P),
+        key_q: is_key_pressed(KeyCode::Q),
         key_t: is_key_pressed(KeyCode::T),
         key_m: is_key_pressed(KeyCode::M),
         f1: is_key_pressed(KeyCode::F1),
@@ -256,7 +257,12 @@ async fn main() {
         } else {
             let input = poll_app_input(dt, mx, my, inside);
             app.handle_input(&input);
+            if app.quit_requested {
+                break;
+            }
         }
+
+        show_mouse(!(inside && !show_reference && app.has_mickey_cursor()));
 
         if renderer.render_if_needed(&app, mx, my, show_reference, picture_guide) {
             texture.update_from_bytes(SCREEN_W as u32, SCREEN_H as u32, &renderer.rgba_buf);

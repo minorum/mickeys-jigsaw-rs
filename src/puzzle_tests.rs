@@ -2413,3 +2413,102 @@ fn held_group_preview_offsets_match_destination_cell_on_uneven_7x7_grid() {
     let (ox2, _) = session.piece_placed_origin(idx_12).unwrap();
     assert_eq!(ox2 - ox1, 39);
 }
+
+#[test]
+fn non_target_placement_and_center_alignment_across_all_grids() {
+    let mut audio = AudioEngine::new(Path::new("."), false, false);
+    for grid_dim in 2usize..=8 {
+        let asset = synthetic_puzzle_asset(1, false);
+        let mut session = PuzzleSession::new(1, asset, grid_dim, false, false, false);
+        if grid_dim >= 4 {
+            // Place interior piece (1, 1) into a different interior cell (2, grid_dim - 2).
+            let src_idx = grid_dim + 1;
+            pick_piece_from_tray(&mut session, src_idx, &mut audio);
+            let dst_r = 2;
+            let dst_c = grid_dim - 2;
+            assert_ne!((dst_r, dst_c), (1, 1));
+            let (dx, dy) = cell_center_screen(&session, dst_r, dst_c);
+            session.handle_click(dx, dy, &mut audio);
+            assert_eq!(session.board_cells[dst_r * grid_dim + dst_c], Some(src_idx));
+            assert!(session.held_piece.is_none());
+
+            // Verify `piece_placed_origin` shifts by exact destination col_x/row_y, and
+            // destination half-width matches source half-width (`FUN_1e59_244e` parity).
+            let (ox, oy) = session.piece_placed_origin(src_idx).unwrap();
+            let col_w = grid_col_widths(grid_dim);
+            let row_h = grid_row_heights(grid_dim);
+            let col_x: i32 = col_w[..dst_c].iter().sum();
+            let row_y: i32 = row_h[..dst_r].iter().sum();
+            assert_eq!(
+                ox - col_x,
+                session.pieces[src_idx].target_x - session.pieces[src_idx].base_x,
+                "grid {grid_dim}x{grid_dim} x origin"
+            );
+            assert_eq!(
+                oy - row_y,
+                session.pieces[src_idx].target_y - session.pieces[src_idx].base_y,
+                "grid {grid_dim}x{grid_dim} y origin"
+            );
+            assert!(
+                (col_w[dst_c] - session.pieces[src_idx].base_w).abs() <= 1
+                    && (col_w[dst_c] - session.pieces[src_idx].base_w) / 2 == 0,
+                "grid {grid_dim}x{grid_dim} width parity"
+            );
+            assert!(
+                (row_h[dst_r] - session.pieces[src_idx].base_h).abs() <= 1
+                    && (row_h[dst_r] - session.pieces[src_idx].base_h) / 2 == 0,
+                "grid {grid_dim}x{grid_dim} height parity"
+            );
+        } else {
+            // 2x2 and 3x3: corner/border/single-center pieces reject incompatible non-target cells.
+            pick_piece_from_tray(&mut session, 0, &mut audio);
+            let (dx, dy) = cell_center_screen(&session, grid_dim - 1, grid_dim - 1);
+            session.handle_click(dx, dy, &mut audio);
+            assert_eq!(session.held_piece, Some(0));
+            assert_eq!(session.board_cells[grid_dim * grid_dim - 1], None);
+        }
+    }
+}
+
+#[test]
+fn group_move_rejects_edge_oob_occupied_and_resets_on_restart() {
+    let asset = synthetic_puzzle_asset(1, false);
+    let mut session = PuzzleSession::new(1, asset.clone(), 4, false, false, false);
+    let mut audio = AudioEngine::new(Path::new("."), false, false);
+
+    // Place horizontal pair (1, 1)=5 and (1, 2)=6, plus obstacle at (2, 3)=11.
+    for (pidx, r, c) in [(5usize, 1usize, 1usize), (6, 1, 2), (11, 2, 3)] {
+        pick_piece_from_tray(&mut session, pidx, &mut audio);
+        let (cx, cy) = cell_center_screen(&session, r, c);
+        session.handle_click(cx, cy, &mut audio);
+    }
+
+    // Pick up connected group {5, 6} anchored at (1, 1).
+    let (x11, y11) = cell_center_screen(&session, 1, 1);
+    assert!(session.handle_right_click(x11, y11, &mut audio));
+    assert_eq!(session.held_group.len(), 2);
+
+    // 1. Out-of-bounds right edge: placing anchor at col 3 pushes member (dc=+1) to col 4 -> rejected.
+    let (x13, y13) = cell_center_screen(&session, 1, 3);
+    session.handle_click(x13, y13, &mut audio);
+    assert_eq!(session.held_piece, Some(5));
+    assert_eq!(session.held_group.len(), 2);
+
+    // 2. Occupied cell: placing anchor at (2, 2) collides member (dc=+1) with obstacle at (2, 3) -> rejected.
+    let (x22, y22) = cell_center_screen(&session, 2, 2);
+    session.handle_click(x22, y22, &mut audio);
+    assert_eq!(session.held_piece, Some(5));
+    assert_eq!(session.held_group.len(), 2);
+
+    // 3. Interrupted interaction: returning to tray drops both group pieces cleanly.
+    session.handle_click(20, 40, &mut audio);
+    assert!(session.held_piece.is_none());
+    assert!(session.held_group.is_empty());
+    assert!(!session.pieces[5].placed && !session.pieces[6].placed);
+
+    // 4. Restarting puzzle clears all board cells and held state.
+    let restarted = PuzzleSession::new(1, asset, 4, false, false, false);
+    assert!(restarted.board_cells.iter().all(Option::is_none));
+    assert!(restarted.held_piece.is_none());
+    assert!(restarted.held_group.is_empty());
+}

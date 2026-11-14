@@ -275,6 +275,21 @@ pub struct PuzzleSession {
     visual_rev: u64,
 }
 
+/// Exports puzzle `puzzle_num`'s `.PRT` monochrome line-art image as `prints/P{num:02}.pbm`.
+pub fn export_print_pbm(game_dir: &Path, puzzle_num: usize) -> Result<String, String> {
+    let prt = PrintAsset::load(game_dir, puzzle_num).map_err(|e| format!("Print error: {e}"))?;
+    let out_dir = game_dir.join("prints");
+    let rel_path = format!("prints/P{puzzle_num:02}.pbm");
+    let pbm_path = out_dir.join(format!("P{puzzle_num:02}.pbm"));
+    let mut pbm = Vec::with_capacity(8032);
+    pbm.extend_from_slice(b"P4\n320 200\n");
+    pbm.extend_from_slice(&prt.bitmap);
+    fs::create_dir_all(&out_dir)
+        .and_then(|()| fs::write(&pbm_path, &pbm))
+        .map_err(|err| format!("Print error: {err}"))?;
+    Ok(format!("Saved printable line-art to {rel_path}"))
+}
+
 impl PuzzleSession {
     pub fn new(
         puzzle_num: usize,
@@ -1765,30 +1780,11 @@ impl PuzzleSession {
 
     /// Exports the puzzle's `.PRT` monochrome line-art image as a portable PBM image in `prints/`.
     pub fn export_printable_picture(&mut self, game_dir: &Path) {
-        match PrintAsset::load(game_dir, self.puzzle_num) {
-            Ok(prt) => {
-                let out_dir = game_dir.join("prints");
-                let pbm_path = out_dir.join(format!("P{:02}.pbm", self.puzzle_num));
-                let mut pbm = Vec::with_capacity(8032);
-                pbm.extend_from_slice(b"P4\n320 200\n");
-                pbm.extend_from_slice(&prt.bitmap);
-                match fs::create_dir_all(&out_dir).and_then(|()| fs::write(&pbm_path, &pbm)) {
-                    Ok(()) => {
-                        self.status_message = Some((
-                            format!(
-                                "Saved printable line-art to prints/P{:02}.pbm",
-                                self.puzzle_num
-                            ),
-                            3.0,
-                        ));
-                    }
-                    Err(err) => self.status_message = Some((format!("Print error: {err}"), 3.0)),
-                }
-            }
-            Err(e) => {
-                self.status_message = Some((format!("Print error: {}", e), 3.0));
-            }
-        }
+        let msg = match export_print_pbm(game_dir, self.puzzle_num) {
+            Ok(ok_msg) => ok_msg,
+            Err(err_msg) => err_msg,
+        };
+        self.status_message = Some((msg, 3.0));
         self.bump_visual();
     }
 
