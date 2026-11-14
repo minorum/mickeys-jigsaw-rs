@@ -230,6 +230,14 @@ pub(crate) fn dissolve_progress(anim: &AnimationPlayer) -> f32 {
 
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PieceEdges {
+    left: Option<(usize, i32)>,
+    right: Option<(usize, i32)>,
+    top: Option<(usize, i32)>,
+    bottom: Option<(usize, i32)>,
+}
+
 /// Complete active puzzle session state (`seg_0e59`, `seg_0b43`).
 pub struct PuzzleSession {
     session_id: u64,
@@ -243,13 +251,18 @@ pub struct PuzzleSession {
     pub(crate) text_enabled: bool,
     pub(crate) elapsed_secs: f64,
     pub(crate) pieces: Vec<JigsawPiece>,
+    pub(crate) board_cells: Vec<Option<usize>>,
+    piece_edges: Vec<PieceEdges>,
     pub(crate) tray_order: Vec<usize>,
     pub(crate) tray_scroll: usize,
     pub(crate) held_piece: Option<usize>,
+    pub(crate) held_group: Vec<(usize, i32, i32)>,
+    held_group_anchor: Option<(usize, usize)>,
     pub(crate) keyboard_pointer: Option<(f32, f32)>,
     drag_origin: Option<(i32, i32)>,
     pub(crate) hint_piece: Option<(usize, f32)>,
     pub(crate) solved: bool,
+    pending_completion_feedback: bool,
     pub(crate) active_anim: Option<AnimationPlayer>,
     voice_rng: LcgRng,
     pub(crate) status_message: Option<(String, f32)>,
@@ -286,13 +299,18 @@ impl PuzzleSession {
             text_enabled: true,
             elapsed_secs: 0.0,
             pieces: Vec::new(),
+            board_cells: Vec::new(),
+            piece_edges: Vec::new(),
             tray_order: Vec::new(),
             tray_scroll: 0,
             held_piece: None,
+            held_group: Vec::new(),
+            held_group_anchor: None,
             keyboard_pointer: None,
             drag_origin: None,
             hint_piece: None,
             solved: false,
+            pending_completion_feedback: false,
             active_anim: None,
             voice_rng: LcgRng::new((puzzle_num as u32).wrapping_mul(0x9e37_79b9) | 1),
             status_message: None,
@@ -398,9 +416,12 @@ impl PuzzleSession {
         assert_eq!(asset.id, self.puzzle_num);
         Self::render_full_picture_into(&asset, &mut self.full_picture_fb);
         let old_placed: Vec<bool> = self.pieces.iter().map(|p| p.placed).collect();
+        let old_board_cells = std::mem::take(&mut self.board_cells);
         let old_tray_order = std::mem::take(&mut self.tray_order);
         let old_tray_scroll = self.tray_scroll;
         let old_held = self.held_piece;
+        let old_held_group = std::mem::take(&mut self.held_group);
+        let old_held_group_anchor = self.held_group_anchor.take();
         let old_solved = self.solved;
 
         self.asset = asset;
@@ -410,10 +431,15 @@ impl PuzzleSession {
             for (new_piece, placed) in self.pieces.iter_mut().zip(old_placed) {
                 new_piece.placed = placed;
             }
+            if old_board_cells.len() == self.board_cells.len() {
+                self.board_cells = old_board_cells;
+            }
             self.tray_order = old_tray_order;
             self.tray_scroll = old_tray_scroll;
             self.clamp_tray_scroll();
             self.held_piece = old_held;
+            self.held_group = old_held_group;
+            self.held_group_anchor = old_held_group_anchor;
             self.solved = old_solved;
         } else {
             self.hint_piece = None;
@@ -525,6 +551,7 @@ impl PuzzleSession {
 
         // Cut each piece directly into its local `(tw, th)` mask and pixel buffer (`FUN_1e59_011c`)
         let mut pieces = Vec::with_capacity(dim * dim);
+        let mut piece_edges = Vec::with_capacity(dim * dim);
         let mut poly = Vec::with_capacity(48);
         let mut nodes = Vec::with_capacity(48);
         // Source picture uses playfield coordinates `2..272, 2..198`
@@ -657,9 +684,25 @@ impl PuzzleSession {
                     sprite,
                     placed: false,
                 });
+                let edge_tag = |is_outer: bool, curved_val: (usize, i32)| {
+                    if is_outer {
+                        None
+                    } else if self.curved_edges {
+                        Some(curved_val)
+                    } else {
+                        Some((0, 0))
+                    }
+                };
+                piece_edges.push(PieceEdges {
+                    left: edge_tag(c == 0, v_edges[r * v_stride + c]),
+                    right: edge_tag(c + 1 == dim, v_edges[r * v_stride + (c + 1)]),
+                    top: edge_tag(r == 0, h_edges[r * dim + c]),
+                    bottom: edge_tag(r + 1 == dim, h_edges[(r + 1) * dim + c]),
+                });
             }
         }
 
+        self.piece_edges = piece_edges;
         // Shuffle pieces into the tray (`FUN_1e59_0b0a`)
         self.finish_cutting(pieces, &mut rng);
     }
@@ -753,6 +796,7 @@ impl PuzzleSession {
                 .wrapping_mul(1103515245)
                 .wrapping_add(12345),
         );
+        self.piece_edges.clear();
         self.finish_cutting(pieces, &mut rng);
         self.grid_polylines_v.clear();
         self.grid_polylines_h.clear();
@@ -760,9 +804,16 @@ impl PuzzleSession {
 
     fn finish_cutting(&mut self, pieces: Vec<JigsawPiece>, rng: &mut LcgRng) {
         self.tray_order = rng.shuffled_indices(pieces.len());
+        self.board_cells = if self.grid_dim > 1 {
+            vec![None; self.grid_dim * self.grid_dim]
+        } else {
+            Vec::new()
+        };
         self.pieces = pieces;
         self.tray_scroll = 0;
         self.held_piece = None;
+        self.held_group.clear();
+        self.held_group_anchor = None;
         self.drag_origin = None;
         self.solved = false;
         self.bump_tray();
@@ -808,18 +859,22 @@ impl PuzzleSession {
         }
     }
 
-    /// Piece hint.
-    pub fn trigger_hint(&mut self) {
+    /// Piece hint (`F1`). Returns `true` if a hint was issued.
+    pub fn trigger_hint(&mut self) -> bool {
         if self.solved {
-            return;
+            return false;
         }
         let target_idx = self
             .held_piece
             .or_else(|| self.tray_order.get(self.tray_scroll).copied())
-            .or_else(|| self.tray_order.first().copied());
+            .or_else(|| self.tray_order.first().copied())
+            .or_else(|| self.first_misplaced_piece());
         if let Some(pidx) = target_idx {
             self.hint_piece = Some((pidx, 1.5));
             self.bump_visual();
+            true
+        } else {
+            false
         }
     }
 
@@ -831,8 +886,13 @@ impl PuzzleSession {
         for p in &mut self.pieces {
             p.placed = true;
         }
+        for (idx, slot) in self.board_cells.iter_mut().enumerate() {
+            *slot = Some(idx);
+        }
         self.tray_order.clear();
         self.tray_scroll = 0;
+        self.held_group.clear();
+        self.held_group_anchor = None;
         self.on_puzzle_completed(audio);
     }
 
@@ -841,10 +901,25 @@ impl PuzzleSession {
         self.solved = true;
         self.toolbox_open = false;
         self.held_piece = None;
+        self.held_group.clear();
+        self.held_group_anchor = None;
         self.hint_piece = None;
         self.drag_origin = None;
+        if self.timer_enabled {
+            let total_secs = self.elapsed_secs.max(0.0).floor() as u64;
+            let hours = total_secs / 3600;
+            let mins = (total_secs % 3600) / 60;
+            let secs = total_secs % 60;
+            self.status_message = Some((format!("Your time was {hours}:{mins:02}:{secs:02}"), 6.0));
+        }
         self.bump_board();
         self.start_sequence(self.default_playback(), audio);
+        if self.active_anim.is_some() {
+            self.pending_completion_feedback = true;
+        } else {
+            self.pending_completion_feedback = false;
+            audio.play_common(CommonSound::DoneWithThisOne);
+        }
     }
 
     fn default_playback(&self) -> SequencePlayback {
@@ -1053,6 +1128,9 @@ impl PuzzleSession {
                         if anim.looping_sound.is_some() {
                             audio.stop_all();
                         }
+                        if std::mem::take(&mut self.pending_completion_feedback) {
+                            audio.play_common(CommonSound::DoneWithThisOne);
+                        }
                         break;
                     }
                     anim.repetitions_left -= 1;
@@ -1238,6 +1316,7 @@ impl PuzzleSession {
         // If an animation is currently playing, clicking skips to the end of the animation
         if self.active_anim.is_some() {
             self.active_anim = None;
+            self.pending_completion_feedback = false;
             audio.stop_all();
             self.bump_visual();
             return None;
@@ -1276,14 +1355,27 @@ impl PuzzleSession {
             let slot = (((my - 30) / slot_h.max(1)) as usize).min(vis - 1);
             let tray_pos = self.tray_scroll + slot;
             if let Some(held) = self.held_piece.take() {
-                // Return held piece to tray
+                // Return held piece (or connected group) to tray
                 let insert_at = tray_pos.min(self.tray_order.len());
-                self.tray_order.insert(insert_at, held);
+                if self.held_group.len() > 1 {
+                    let group: Vec<usize> = self.held_group.drain(..).map(|(p, _, _)| p).collect();
+                    self.held_group_anchor = None;
+                    for (offset, gp) in group.into_iter().enumerate() {
+                        self.tray_order
+                            .insert((insert_at + offset).min(self.tray_order.len()), gp);
+                    }
+                } else {
+                    self.held_group.clear();
+                    self.held_group_anchor = None;
+                    self.tray_order.insert(insert_at, held);
+                }
                 audio.play_common(CommonSound::ReturnPiece);
                 self.bump_tray();
             } else if tray_pos < self.tray_order.len() {
                 let pidx = self.tray_order.remove(tray_pos);
                 self.held_piece = Some(pidx);
+                self.held_group.clear();
+                self.held_group_anchor = None;
                 if self.tray_scroll > 0 && self.tray_scroll >= self.tray_order.len() {
                     self.tray_scroll = self.tray_order.len().saturating_sub(1);
                 }
@@ -1297,28 +1389,378 @@ impl PuzzleSession {
         let pfx = self.playfield_x();
         let pfy = self.playfield_y();
         if let Some(pidx) = self.held_piece {
-            let piece = &self.pieces[pidx];
-            let target_cx = pfx + piece.base_x + piece.base_w / 2;
-            let target_cy = pfy + piece.base_y + piece.base_h / 2;
-            let snap_tol_x = (piece.base_w / 2).max(12);
-            let snap_tol_y = (piece.base_h / 2).max(12);
-
-            if (mx - target_cx).abs() <= snap_tol_x && (my - target_cy).abs() <= snap_tol_y {
-                self.pieces[pidx].placed = true;
-                self.held_piece = None;
-                self.hint_piece = None;
-                self.bump_board();
-                if self.pieces.iter().all(|p| p.placed) {
-                    self.on_puzzle_completed(audio);
+            if self.grid_dim > 1 && self.piece_edges.len() == self.pieces.len() {
+                let px = mx - pfx;
+                let py = my - pfy;
+                if let Some((target_r, target_c)) = self.grid_cell_at(px, py) {
+                    if self.held_group.len() > 1 {
+                        if self.try_place_held_group(target_r, target_c, audio) {
+                            return None;
+                        }
+                    } else if self.can_place_piece_at(pidx, target_r, target_c) {
+                        let cell = target_r * self.grid_dim + target_c;
+                        self.board_cells[cell] = Some(pidx);
+                        self.pieces[pidx].placed = true;
+                        self.held_piece = None;
+                        self.held_group.clear();
+                        self.held_group_anchor = None;
+                        self.hint_piece = None;
+                        self.bump_board();
+                        self.check_grid_completion(audio);
+                        return None;
+                    }
                 }
-            } else {
                 audio.play_error();
+            } else {
+                let piece = &self.pieces[pidx];
+                let target_cx = pfx + piece.base_x + piece.base_w / 2;
+                let target_cy = pfy + piece.base_y + piece.base_h / 2;
+                let snap_tol_x = (piece.base_w / 2).max(12);
+                let snap_tol_y = (piece.base_h / 2).max(12);
+
+                if (mx - target_cx).abs() <= snap_tol_x && (my - target_cy).abs() <= snap_tol_y {
+                    self.pieces[pidx].placed = true;
+                    self.held_piece = None;
+                    self.hint_piece = None;
+                    self.bump_board();
+                    if self.pieces.iter().all(|p| p.placed) {
+                        self.on_puzzle_completed(audio);
+                    }
+                } else {
+                    audio.play_error();
+                }
             }
-        } else if mx < 16 && my < 16 {
+        } else if mx < 16 && my < 16 && !self.toolbox_open {
             self.toolbox_open = true;
+            self.bump_board();
+        } else if self.grid_dim > 1
+            && let Some((r, c)) = self.grid_cell_at(mx - pfx, my - pfy)
+            && let Some(placed_idx) = self
+                .board_cells
+                .get(r * self.grid_dim + c)
+                .copied()
+                .flatten()
+        {
+            // Pick up placed piece from board (`FUN_1e59_14b6`)
+            self.board_cells[r * self.grid_dim + c] = None;
+            self.pieces[placed_idx].placed = false;
+            self.held_piece = Some(placed_idx);
+            self.held_group.clear();
+            self.held_group_anchor = None;
+            audio.play_common(CommonSound::ChoosePiece);
             self.bump_board();
         }
         None
+    }
+
+    pub fn has_any_placed_piece(&self) -> bool {
+        self.pieces.iter().any(|p| p.placed)
+    }
+
+    pub fn has_unfinished_progress(&self) -> bool {
+        self.has_any_placed_piece() || !self.held_group.is_empty()
+    }
+
+    /// Playfield-relative draw origin `(x, y)` for a placed piece, accounting for non-target grid placement.
+    pub fn piece_placed_origin(&self, piece_idx: usize) -> Option<(i32, i32)> {
+        let piece = self.pieces.get(piece_idx)?;
+        if !piece.placed {
+            return None;
+        }
+        if self.grid_dim <= 1 || self.board_cells.len() != self.grid_dim * self.grid_dim {
+            return Some((piece.target_x, piece.target_y));
+        }
+        let cell_idx = self
+            .board_cells
+            .iter()
+            .position(|&slot| slot == Some(piece_idx))
+            .unwrap_or(piece_idx);
+        let dim = self.grid_dim;
+        let cell_r = cell_idx / dim;
+        let cell_c = cell_idx % dim;
+        let col_x: i32 = grid_col_widths(dim)[..cell_c].iter().sum();
+        let row_y: i32 = grid_row_heights(dim)[..cell_r].iter().sum();
+        Some((
+            piece.target_x + col_x - piece.base_x,
+            piece.target_y + row_y - piece.base_y,
+        ))
+    }
+
+    /// Returns `(piece_idx, cell_dx, cell_dy)` for each piece in the currently held group relative to `held_piece`,
+    /// using the destination anchor cell under `(pointer_x, pointer_y)` when valid on the grid.
+    pub fn held_group_offsets_at(&self, pointer_x: i32, pointer_y: i32) -> Vec<(usize, i32, i32)> {
+        let Some(anchor_idx) = self.held_piece else {
+            return Vec::new();
+        };
+        if self.held_group.len() <= 1 || self.grid_dim <= 1 {
+            return vec![(anchor_idx, 0, 0)];
+        }
+        let dim_i32 = self.grid_dim as i32;
+        let dest_anchor = self
+            .grid_cell_at(
+                pointer_x - self.playfield_x(),
+                pointer_y - self.playfield_y(),
+            )
+            .filter(|&(dr_cell, dc_cell)| {
+                self.held_group.iter().all(|&(_, dr, dc)| {
+                    (0..dim_i32).contains(&(dr_cell as i32 + dr))
+                        && (0..dim_i32).contains(&(dc_cell as i32 + dc))
+                })
+            });
+        let Some((anchor_r, anchor_c)) = dest_anchor.or(self.held_group_anchor) else {
+            return vec![(anchor_idx, 0, 0)];
+        };
+        let dim = self.grid_dim;
+        let col_w = grid_col_widths(dim);
+        let row_h = grid_row_heights(dim);
+        let mut col_x = [0i32; 9];
+        let mut row_y = [0i32; 9];
+        for i in 0..dim {
+            col_x[i + 1] = col_x[i] + col_w[i];
+            row_y[i + 1] = row_y[i] + row_h[i];
+        }
+        self.held_group
+            .iter()
+            .map(|&(pidx, dr, dc)| {
+                let nr = (anchor_r as i32 + dr) as usize;
+                let nc = (anchor_c as i32 + dc) as usize;
+                (
+                    pidx,
+                    col_x[nc] - col_x[anchor_c],
+                    row_y[nr] - row_y[anchor_r],
+                )
+            })
+            .collect()
+    }
+
+    /// Right-click on a placed grid piece picks up its connected edge-matching group (`FUN_1e59_125f` + `FUN_1e59_2523`).
+    /// Returns `true` if a group was picked up.
+    pub fn handle_right_click(&mut self, mx: i32, my: i32, audio: &mut AudioEngine) -> bool {
+        if self.solved || self.held_piece.is_some() || self.grid_dim <= 1 {
+            return false;
+        }
+        if self.toolbox_open && mx < TOOLBOX_W {
+            return false;
+        }
+        let pfx = self.playfield_x();
+        let pfy = self.playfield_y();
+        let Some((start_r, start_c)) = self.grid_cell_at(mx - pfx, my - pfy) else {
+            return false;
+        };
+        let dim = self.grid_dim;
+        let Some(anchor_pidx) = self
+            .board_cells
+            .get(start_r * dim + start_c)
+            .copied()
+            .flatten()
+        else {
+            return false;
+        };
+
+        // Flood-fill connected placed pieces (`FUN_1e59_125f`)
+        let mut visited = vec![false; dim * dim];
+        let mut queue = vec![(start_r, start_c)];
+        visited[start_r * dim + start_c] = true;
+        let mut group = Vec::new();
+        let mut head = 0;
+        while head < queue.len() {
+            let (r, c) = queue[head];
+            head += 1;
+            let idx = r * dim + c;
+            if let Some(pidx) = self.board_cells[idx] {
+                group.push((pidx, r as i32 - start_r as i32, c as i32 - start_c as i32));
+                let neighbors = [
+                    (r > 0).then(|| (r - 1, c)),
+                    (r + 1 < dim).then(|| (r + 1, c)),
+                    (c > 0).then(|| (r, c - 1)),
+                    (c + 1 < dim).then(|| (r, c + 1)),
+                ];
+                for (nr, nc) in neighbors.into_iter().flatten() {
+                    let nidx = nr * dim + nc;
+                    if !visited[nidx] && self.board_cells[nidx].is_some() {
+                        visited[nidx] = true;
+                        queue.push((nr, nc));
+                    }
+                }
+            }
+        }
+
+        for &(_, dr, dc) in &group {
+            let r = (start_r as i32 + dr) as usize;
+            let c = (start_c as i32 + dc) as usize;
+            if let Some(pidx) = self.board_cells[r * dim + c].take() {
+                self.pieces[pidx].placed = false;
+            }
+        }
+        self.held_piece = Some(anchor_pidx);
+        self.held_group = group;
+        self.held_group_anchor = Some((start_r, start_c));
+        audio.play_common(CommonSound::ChoosePiece);
+        self.bump_board();
+        true
+    }
+
+    fn grid_cell_at(&self, px: i32, py: i32) -> Option<(usize, usize)> {
+        if self.grid_dim <= 1 || !(0..PLAYFIELD_W).contains(&px) || !(0..PLAYFIELD_H).contains(&py)
+        {
+            return None;
+        }
+        let dim = self.grid_dim;
+        let col_w = grid_col_widths(dim);
+        let row_h = grid_row_heights(dim);
+        let mut x = 0;
+        let mut found_c = None;
+        for (c, &w) in col_w.iter().enumerate() {
+            if px >= x && px < x + w {
+                found_c = Some(c);
+                break;
+            }
+            x += w;
+        }
+        let mut y = 0;
+        let mut found_r = None;
+        for (r, &h) in row_h.iter().enumerate() {
+            if py >= y && py < y + h {
+                found_r = Some(r);
+                break;
+            }
+            y += h;
+        }
+        Some((found_r?, found_c?))
+    }
+
+    fn can_place_piece_at(&self, pidx: usize, r: usize, c: usize) -> bool {
+        let dim = self.grid_dim;
+        if r >= dim || c >= dim || self.board_cells[r * dim + c].is_some() {
+            return false;
+        }
+        let edges = self.piece_edges[pidx];
+        // Outer borders must be flat (`None`), internal boundaries must be non-flat (`Some`) and match occupied neighbors (`FUN_1e59_266f`)
+        if c == 0 {
+            if edges.left.is_some() {
+                return false;
+            }
+        } else {
+            if edges.left.is_none() {
+                return false;
+            }
+            if let Some(np) = self.board_cells[r * dim + (c - 1)]
+                && edges.left != self.piece_edges[np].right
+            {
+                return false;
+            }
+        }
+        if c + 1 == dim {
+            if edges.right.is_some() {
+                return false;
+            }
+        } else {
+            if edges.right.is_none() {
+                return false;
+            }
+            if let Some(np) = self.board_cells[r * dim + (c + 1)]
+                && edges.right != self.piece_edges[np].left
+            {
+                return false;
+            }
+        }
+        if r == 0 {
+            if edges.top.is_some() {
+                return false;
+            }
+        } else {
+            if edges.top.is_none() {
+                return false;
+            }
+            if let Some(np) = self.board_cells[(r - 1) * dim + c]
+                && edges.top != self.piece_edges[np].bottom
+            {
+                return false;
+            }
+        }
+        if r + 1 == dim {
+            if edges.bottom.is_some() {
+                return false;
+            }
+        } else {
+            if edges.bottom.is_none() {
+                return false;
+            }
+            if let Some(np) = self.board_cells[(r + 1) * dim + c]
+                && edges.bottom != self.piece_edges[np].top
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn try_place_held_group(
+        &mut self,
+        target_r: usize,
+        target_c: usize,
+        audio: &mut AudioEngine,
+    ) -> bool {
+        let dim = self.grid_dim as i32;
+        let mut placements = Vec::with_capacity(self.held_group.len());
+        for &(pidx, dr, dc) in &self.held_group {
+            let nr = target_r as i32 + dr;
+            let nc = target_c as i32 + dc;
+            if !(0..dim).contains(&nr) || !(0..dim).contains(&nc) {
+                return false;
+            }
+            let ur = nr as usize;
+            let uc = nc as usize;
+            if !self.can_place_piece_at(pidx, ur, uc) {
+                return false;
+            }
+            placements.push((pidx, ur, uc));
+        }
+        for (pidx, ur, uc) in placements {
+            self.board_cells[ur * self.grid_dim + uc] = Some(pidx);
+            self.pieces[pidx].placed = true;
+        }
+        self.held_piece = None;
+        self.held_group.clear();
+        self.held_group_anchor = None;
+        self.hint_piece = None;
+        self.bump_board();
+        self.check_grid_completion(audio);
+        true
+    }
+
+    fn first_misplaced_piece(&self) -> Option<usize> {
+        if self.grid_dim <= 1 || self.board_cells.len() != self.pieces.len() {
+            return None;
+        }
+        self.board_cells
+            .iter()
+            .enumerate()
+            .find_map(|(cell, slot)| match *slot {
+                Some(pidx) if pidx != cell => Some(pidx),
+                _ => None,
+            })
+    }
+
+    fn check_grid_completion(&mut self, audio: &mut AudioEngine) {
+        if !self.pieces.iter().all(|p| p.placed) {
+            return;
+        }
+        let all_home = self
+            .board_cells
+            .iter()
+            .enumerate()
+            .all(|(cell, slot)| *slot == Some(cell));
+        if all_home {
+            self.on_puzzle_completed(audio);
+        } else {
+            audio.play_common(CommonSound::NotDoneYet);
+            self.status_message = Some((
+                "Not finished yet. Push F1 for a hint or F2 to finish.".to_string(),
+                5.0,
+            ));
+            self.bump_visual();
+        }
     }
 
     /// Exports the puzzle's `.PRT` monochrome line-art image as a portable PBM image in `prints/`.

@@ -22,18 +22,27 @@ pub const AUDIO_SAMPLE_RATE: u32 = 22050;
 #[derive(Clone, Copy, Debug)]
 #[repr(usize)]
 pub enum CommonSound {
+    Cancel = 0,
+    SetupStart = 1,
+    Quit = 2,
     NextPicture = 3,
     PreviousPicture = 4,
     StartPuzzle = 5,
+    UiClick = 6,
     ChooseSize = 7,
     ChoosePiece = 8,
     ReturnPiece = 9,
     OtherPicture = 10,
+    ChangePieceSize = 11,
+    SeeWhatHappens = 12,
+    DoneWithThisOne = 13,
+    NotDoneYet = 14,
 }
 
 impl CommonSound {
     pub fn caption(self) -> &'static str {
         match self {
+            Self::Cancel | Self::SetupStart | Self::Quit | Self::UiClick => "",
             Self::NextPicture => "What's the next picture?",
             Self::PreviousPicture => "Let's look at the last picture.",
             Self::StartPuzzle => "Let's make this one.",
@@ -41,6 +50,10 @@ impl CommonSound {
             Self::ChoosePiece => "Let's choose a piece.",
             Self::ReturnPiece => "Let's put this one back for now.",
             Self::OtherPicture => "Let's make a different\rpuzzle.",
+            Self::ChangePieceSize => "Let's use a different piece size.",
+            Self::SeeWhatHappens => "Let's see what happens.",
+            Self::DoneWithThisOne => "I guess we're done with this one.",
+            Self::NotDoneYet => "We're not done yet.",
         }
     }
 }
@@ -665,11 +678,14 @@ impl AudioEngine {
         }
         let (bank, phrase) = COMMON_FEEDBACK[event as usize];
         let samples = self.decoded_nnv_samples(bank, phrase);
-        let duration = (samples.len() as f32 / NNV_SAMPLE_RATE as f32)
-            .max(event.caption().len() as f32 / 25.0)
-            .max(2.0);
-        self.next_caption_rev = self.next_caption_rev.wrapping_add(1);
-        self.common_caption = Some((event, duration, self.next_caption_rev));
+        let caption = event.caption();
+        if !caption.is_empty() {
+            let duration = (samples.len() as f32 / NNV_SAMPLE_RATE as f32)
+                .max(caption.len() as f32 / 25.0)
+                .max(2.0);
+            self.next_caption_rev = self.next_caption_rev.wrapping_add(1);
+            self.common_caption = Some((event, duration, self.next_caption_rev));
+        }
         if self.sfx_enabled {
             self.play_effect(samples, NNV_SAMPLE_RATE);
         }

@@ -2162,3 +2162,254 @@ fn move_keyboard_pointer_ignores_non_finite_and_negative_dt() {
         assert!(y.is_finite() && (0.0..=199.0).contains(&y));
     }
 }
+
+fn pick_piece_from_tray(session: &mut PuzzleSession, target_idx: usize, audio: &mut AudioEngine) {
+    let pos = session
+        .tray_order
+        .iter()
+        .position(|&p| p == target_idx)
+        .expect("piece in tray");
+    session.tray_scroll = pos;
+    session.handle_click(20, 40, audio);
+    assert_eq!(session.held_piece, Some(target_idx));
+}
+
+fn cell_center_screen(session: &PuzzleSession, r: usize, c: usize) -> (i32, i32) {
+    let col_w = grid_col_widths(session.grid_dim);
+    let row_h = grid_row_heights(session.grid_dim);
+    let cx: i32 = col_w[..c].iter().sum::<i32>() + col_w[c] / 2;
+    let cy: i32 = row_h[..r].iter().sum::<i32>() + row_h[r] / 2;
+    (session.playfield_x() + cx, session.playfield_y() + cy)
+}
+
+#[test]
+fn straight_edge_grid_allows_non_target_compatible_placement_and_detects_misplaced_completion() {
+    let asset = synthetic_puzzle_asset(1, false);
+    let mut session = PuzzleSession::new(1, asset, 4, false, false, false);
+    let mut audio = AudioEngine::new(Path::new("."), false, false);
+
+    // Piece 1 is (0, 1) and piece 2 is (0, 2); in straight-edge mode they have identical edge signatures.
+    // Verify piece 1 cannot be placed on corner (0, 0) (which needs a flat left border).
+    pick_piece_from_tray(&mut session, 1, &mut audio);
+    let (x00, y00) = cell_center_screen(&session, 0, 0);
+    session.handle_click(x00, y00, &mut audio);
+    assert_eq!(session.held_piece, Some(1));
+
+    // Place all 16 pieces, swapping pieces 1 and 2 into cells (0, 2) and (0, 1).
+    let (x02, y02) = cell_center_screen(&session, 0, 2);
+    session.handle_click(x02, y02, &mut audio);
+    assert!(session.held_piece.is_none());
+    assert_eq!(session.board_cells[2], Some(1));
+
+    pick_piece_from_tray(&mut session, 2, &mut audio);
+    let (x01, y01) = cell_center_screen(&session, 0, 1);
+    session.handle_click(x01, y01, &mut audio);
+    assert_eq!(session.board_cells[1], Some(2));
+
+    for idx in 0..16 {
+        if idx == 1 || idx == 2 {
+            continue;
+        }
+        pick_piece_from_tray(&mut session, idx, &mut audio);
+        let (x, y) = cell_center_screen(&session, idx / 4, idx % 4);
+        session.handle_click(x, y, &mut audio);
+        assert!(session.pieces[idx].placed);
+    }
+
+    assert!(!session.solved);
+    assert_eq!(
+        session.status_message(),
+        Some("Not finished yet. Push F1 for a hint or F2 to finish.")
+    );
+
+    // F1 highlights the first misplaced piece (piece 2 in cell 1).
+    session.trigger_hint();
+    assert_eq!(session.hint_piece.map(|(p, _)| p), Some(2));
+
+    // F2 swaps misplaced pieces into place and completes the puzzle.
+    session.auto_solve(&mut audio);
+    assert!(session.solved);
+    assert_eq!(session.board_cells[1], Some(1));
+    assert_eq!(session.board_cells[2], Some(2));
+}
+
+#[test]
+fn placed_piece_pickup_and_right_click_connected_group_move() {
+    let asset = synthetic_puzzle_asset(1, false);
+    let mut session = PuzzleSession::new(1, asset, 4, false, false, false);
+    let mut audio = AudioEngine::new(Path::new("."), false, false);
+
+    // Place pieces (0, 1)=1 and (1, 1)=5 into their home cells.
+    pick_piece_from_tray(&mut session, 1, &mut audio);
+    let (x01, y01) = cell_center_screen(&session, 0, 1);
+    session.handle_click(x01, y01, &mut audio);
+    assert!(session.pieces[1].placed);
+
+    // Left-click placed piece 1 to pick it back up.
+    session.handle_click(x01, y01, &mut audio);
+    assert_eq!(session.held_piece, Some(1));
+    assert!(!session.pieces[1].placed);
+    assert_eq!(session.board_cells[1], None);
+
+    // Place piece 1 and piece 5 back on board to form a 2-piece vertical cluster.
+    session.handle_click(x01, y01, &mut audio);
+    pick_piece_from_tray(&mut session, 5, &mut audio);
+    let (x11, y11) = cell_center_screen(&session, 1, 1);
+    session.handle_click(x11, y11, &mut audio);
+    assert!(session.pieces[1].placed && session.pieces[5].placed);
+
+    // Right-click piece 1 to pick up the 2-piece connected group.
+    assert!(session.handle_right_click(x01, y01, &mut audio));
+    assert_eq!(session.held_piece, Some(1));
+    assert_eq!(session.held_group.len(), 2);
+    assert!(!session.pieces[1].placed && !session.pieces[5].placed);
+
+    // Move the entire connected group one column right to (0, 2) and (1, 2).
+    let (x02, y02) = cell_center_screen(&session, 0, 2);
+    session.handle_click(x02, y02, &mut audio);
+    assert!(session.held_piece.is_none());
+    assert!(session.held_group.is_empty());
+    assert_eq!(session.board_cells[2], Some(1));
+    assert_eq!(session.board_cells[6], Some(5));
+}
+
+#[test]
+fn completion_time_message_formatted_when_timer_enabled() {
+    let asset = synthetic_puzzle_asset(1, false);
+    let mut session = PuzzleSession::new(1, asset, 2, true, false, true);
+    let mut audio = AudioEngine::new(Path::new("."), false, false);
+    session.update(3661.5, &mut audio);
+    session.auto_solve(&mut audio);
+    assert!(session.solved);
+    assert_eq!(session.status_message(), Some("Your time was 1:01:01"));
+}
+
+#[test]
+fn replace_scene_asset_preserves_board_cells_and_held_group() {
+    let vga_asset = synthetic_puzzle_asset(1, false);
+    let ega_asset = synthetic_puzzle_asset(1, true);
+    let mut session = PuzzleSession::new(1, vga_asset, 4, false, false, false);
+    let mut audio = AudioEngine::new(Path::new("."), false, false);
+
+    // Place piece 13 (3, 1) at compatible cell (3, 2) = index 14.
+    pick_piece_from_tray(&mut session, 13, &mut audio);
+    let (x32, y32) = cell_center_screen(&session, 3, 2);
+    session.handle_click(x32, y32, &mut audio);
+    assert_eq!(session.board_cells[14], Some(13));
+
+    // Place pieces 1 (0, 1) and 5 (1, 1) and pick them up as a 2-piece held group.
+    pick_piece_from_tray(&mut session, 1, &mut audio);
+    let (x01, y01) = cell_center_screen(&session, 0, 1);
+    session.handle_click(x01, y01, &mut audio);
+    pick_piece_from_tray(&mut session, 5, &mut audio);
+    let (x11, y11) = cell_center_screen(&session, 1, 1);
+    session.handle_click(x11, y11, &mut audio);
+    assert!(session.handle_right_click(x01, y01, &mut audio));
+    assert_eq!(session.held_piece, Some(1));
+    assert_eq!(session.held_group.len(), 2);
+
+    // Switch video mode mid-puzzle via replace_scene_asset.
+    session.replace_scene_asset(ega_asset);
+    assert_eq!(session.board_cells[14], Some(13));
+    assert!(session.pieces[13].placed);
+    assert_eq!(session.held_piece, Some(1));
+    assert_eq!(session.held_group.len(), 2);
+
+    // Place the preserved held group onto (0, 2)/(1, 2), then pick up piece 13 from (3, 2).
+    let (x02, y02) = cell_center_screen(&session, 0, 2);
+    session.handle_click(x02, y02, &mut audio);
+    assert!(session.held_piece.is_none());
+    assert_eq!(session.board_cells[2], Some(1));
+    assert_eq!(session.board_cells[6], Some(5));
+
+    session.handle_click(x32, y32, &mut audio);
+    assert_eq!(session.held_piece, Some(13));
+    assert_eq!(session.board_cells[14], None);
+}
+
+#[test]
+fn blend_picture_guide_protects_non_anchor_held_group_pixels_matching_board_bg() {
+    let mut palette = [[0u8; 3]; 256];
+    palette[1] = [10, 20, 220];
+    palette[7] = [204, 204, 187];
+    let asset = PuzzleAsset {
+        id: 1,
+        palette,
+        records: vec![SceneRecord::Frame {
+            bg_frame_idx: 0,
+            bg_color: 1,
+            commands: vec![],
+        }],
+        sequences: Vec::new(),
+        hotspots: Vec::new(),
+        full_anim_seq_idx: 0,
+        sounds: Vec::new(),
+        sprites: Vec::new(),
+    };
+    let mut session = PuzzleSession::new(1, asset, 4, false, false, false);
+    let mut audio = AudioEngine::new(Path::new("."), false, false);
+    let mut renderer = PuzzleRenderer::new();
+
+    // Pick up pieces 1 (anchor) and 5 (non-anchor) as a 2-piece connected group.
+    pick_piece_from_tray(&mut session, 1, &mut audio);
+    let (x01, y01) = cell_center_screen(&session, 0, 1);
+    session.handle_click(x01, y01, &mut audio);
+    pick_piece_from_tray(&mut session, 5, &mut audio);
+    let (x11, y11) = cell_center_screen(&session, 1, 1);
+    session.handle_click(x11, y11, &mut audio);
+    assert!(session.handle_right_click(x01, y01, &mut audio));
+    assert_eq!(session.held_group.len(), 2);
+
+    let bg_rgba = [204u8, 204, 187, 255];
+    let mut rgba = bg_rgba.repeat(320 * 200);
+    let pointer_x = x01;
+    let pointer_y = y01;
+    renderer.blend_picture_guide(&session, &mut rgba, pointer_x, pointer_y);
+
+    // Center of non-anchor piece 5 (which had board_bg color in rgba) must remain protected.
+    let (_, cell_dx, cell_dy) = session.held_group_offsets_at(pointer_x, pointer_y)[1];
+    let anchor = &session.pieces[1];
+    let piece5 = &session.pieces[5];
+    let sx = (pointer_x - anchor.base_w / 2 + cell_dx + piece5.target_x - piece5.base_x
+        + piece5.base_w / 2) as usize;
+    let sy = (pointer_y - anchor.base_h / 2 + cell_dy + piece5.target_y - piece5.base_y
+        + piece5.base_h / 2) as usize;
+    let off = (sy * 320 + sx) * 4;
+    assert_eq!(&rgba[off..off + 4], &bg_rgba);
+
+    // Uncovered empty cell (3, 3) should have been blended with the blue guide picture.
+    let (x33, y33) = cell_center_screen(&session, 3, 3);
+    let empty_off = (y33 as usize * 320 + x33 as usize) * 4;
+    assert_ne!(&rgba[empty_off..empty_off + 4], &bg_rgba);
+}
+
+#[test]
+fn held_group_preview_offsets_match_destination_cell_on_uneven_7x7_grid() {
+    let asset = synthetic_puzzle_asset(1, false);
+    let mut session = PuzzleSession::new(1, asset, 7, false, false, false);
+    let mut audio = AudioEngine::new(Path::new("."), false, false);
+
+    // On a 7x7 grid, col_w = [39, 38, 39, 38, 39, 38, 39]:
+    // c1->c2 spans 38 px, whereas c2->c3 spans 39 px.
+    let idx_11 = 7 + 1;
+    let idx_12 = 7 + 2;
+    pick_piece_from_tray(&mut session, idx_11, &mut audio);
+    let (x11, y11) = cell_center_screen(&session, 1, 1);
+    session.handle_click(x11, y11, &mut audio);
+    pick_piece_from_tray(&mut session, idx_12, &mut audio);
+    let (x12, y12) = cell_center_screen(&session, 1, 2);
+    session.handle_click(x12, y12, &mut audio);
+
+    assert!(session.handle_right_click(x11, y11, &mut audio));
+    assert_eq!(session.held_group.len(), 2);
+
+    // Hovering over (1, 2) must preview piece idx_12 at +39 px (c2->c3), not +38 px (c1->c2).
+    let offsets = session.held_group_offsets_at(x12, y12);
+    assert_eq!(offsets, vec![(idx_11, 0, 0), (idx_12, 39, 0)]);
+
+    // Placing at (1, 2) snaps idx_11 to (1, 2) and idx_12 to (1, 3), 39 px apart.
+    session.handle_click(x12, y12, &mut audio);
+    let (ox1, _) = session.piece_placed_origin(idx_11).unwrap();
+    let (ox2, _) = session.piece_placed_origin(idx_12).unwrap();
+    assert_eq!(ox2 - ox1, 39);
+}
