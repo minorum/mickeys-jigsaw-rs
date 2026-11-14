@@ -3175,7 +3175,7 @@ fn composite_gpu_layers_sw(
         {
             let blink = ((rem * 8.0) as i32) & 1 == 0;
             if !blink {
-                for px in hint_buf.chunks_exact_mut(4) {
+                for px in hint_buf.as_chunks_mut::<4>().0 {
                     if px[3] > 0 {
                         px[1] = 0;
                         px[2] = 0;
@@ -3266,8 +3266,10 @@ fn gpu_layer_composition_matches_software_renderer_pixel_for_pixel() {
                 let composited = composite_gpu_layers_sw(&app, &mut layer_renderer, mx, my, guide);
                 if composited != ref_renderer.rgba_buf {
                     let diff_idx = composited
-                        .chunks_exact(4)
-                        .zip(ref_renderer.rgba_buf.chunks_exact(4))
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .zip(ref_renderer.rgba_buf.as_chunks::<4>().0.iter())
                         .position(|(a, b)| a != b)
                         .unwrap();
                     let dx = (diff_idx as i32) % SCREEN_W;
@@ -3297,8 +3299,10 @@ fn gpu_layer_composition_matches_software_renderer_pixel_for_pixel() {
                 let composited = composite_gpu_layers_sw(&app, &mut layer_renderer, mx, my, guide);
                 if composited != ref_renderer.rgba_buf {
                     let diff_idx = composited
-                        .chunks_exact(4)
-                        .zip(ref_renderer.rgba_buf.chunks_exact(4))
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .zip(ref_renderer.rgba_buf.as_chunks::<4>().0.iter())
                         .position(|(a, b)| a != b)
                         .unwrap();
                     let dx = (diff_idx as i32) % SCREEN_W;
