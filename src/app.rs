@@ -477,9 +477,14 @@ impl GameApp {
             return;
         }
 
+        let dt = if input.dt.is_finite() {
+            input.dt.max(0.0)
+        } else {
+            0.0
+        };
         match self.screen {
             AppScreen::Title => {
-                self.screen_timer += input.dt;
+                self.screen_timer += dt;
                 if input.escape {
                     self.set_screen(AppScreen::Browser);
                 } else if input.left_pressed
@@ -496,7 +501,7 @@ impl GameApp {
                 }
             }
             AppScreen::Credits { page } => {
-                self.screen_timer += input.dt;
+                self.screen_timer += dt;
                 if input.escape {
                     self.set_screen(AppScreen::Browser);
                 } else if input.left_pressed
@@ -521,7 +526,9 @@ impl GameApp {
                     self.exit_setup(return_to_playing);
                 } else {
                     let done = if input.left {
-                        self.setup_menu.activate_or_cycle(&self.game_dir);
+                        if self.setup_menu.selected_row + 1 < self.setup_menu.num_rows() {
+                            self.setup_menu.activate_or_cycle(&self.game_dir);
+                        }
                         false
                     } else if input.right || input.enter || input.space {
                         self.setup_menu.activate_or_cycle(&self.game_dir)

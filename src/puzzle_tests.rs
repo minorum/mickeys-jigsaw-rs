@@ -2120,3 +2120,45 @@ fn toolbox_cache_invalidates_on_tray_pickup_and_return_without_bumping_board_rev
         "stale toolbox after return"
     );
 }
+
+#[test]
+fn hint_targets_first_visible_tray_piece_when_scrolled() {
+    let asset = synthetic_puzzle_asset(1, false);
+    let mut session = PuzzleSession::new(1, asset, 3, true, false, false);
+    session.scroll_tray(2);
+    assert_eq!(session.tray_scroll, 2);
+
+    session.trigger_hint();
+    assert_eq!(session.hint_piece, Some((session.tray_order[2], 1.5)));
+
+    let held = session.tray_order.remove(0);
+    session.held_piece = Some(held);
+    session.trigger_hint();
+    assert_eq!(session.hint_piece, Some((held, 1.5)));
+}
+
+#[test]
+fn enter_skip_animation_does_not_spawn_keyboard_pointer() {
+    let asset = synthetic_puzzle_asset(1, false);
+    let mut session = PuzzleSession::new(1, asset, 2, true, false, false);
+    let mut audio = AudioEngine::new(Path::new("."), false, false);
+    session.auto_solve(&mut audio);
+    assert!(session.active_anim.is_some());
+    assert!(session.keyboard_pointer.is_none());
+
+    assert!(session.handle_keyboard_activate(&mut audio).is_none());
+    assert!(session.active_anim.is_none());
+    assert!(session.keyboard_pointer.is_none());
+}
+
+#[test]
+fn move_keyboard_pointer_ignores_non_finite_and_negative_dt() {
+    let asset = synthetic_puzzle_asset(1, false);
+    let mut session = PuzzleSession::new(1, asset, 2, true, false, false);
+    for dt in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -1.0] {
+        session.move_keyboard_pointer(0.0, 1.0, dt);
+        let (x, y) = session.keyboard_pointer.unwrap();
+        assert!(x.is_finite() && (0.0..=319.0).contains(&x));
+        assert!(y.is_finite() && (0.0..=199.0).contains(&y));
+    }
+}
