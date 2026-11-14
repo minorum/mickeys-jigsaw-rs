@@ -1663,3 +1663,29 @@ fn title_escape_skips_directly_to_browser() {
     });
     assert_eq!(app.screen, AppScreen::Browser);
 }
+
+#[test]
+fn playing_escape_exits_without_updating_session_on_exit_frame() {
+    let mut app = synthetic_app();
+    app.session = Some(PuzzleSession::new(
+        1,
+        app.preview_asset.clone(),
+        2,
+        true,
+        false,
+        true,
+    ));
+    app.set_screen(AppScreen::Playing);
+
+    app.handle_input(&AppInput {
+        dt: 1.0,
+        escape: true,
+        f2: true,
+        ..Default::default()
+    });
+
+    assert_eq!(app.screen, AppScreen::Browser);
+    let session = app.session.as_ref().unwrap();
+    assert!(!session.solved);
+    assert_eq!(session.elapsed_secs, 0.0);
+}

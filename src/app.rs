@@ -143,7 +143,7 @@ pub struct GameApp {
     pub setup_menu: SetupMenu,
     pub audio: AudioEngine,
     pub screen: AppScreen,
-    pub screen_timer: f32,
+    screen_timer: f32,
 
     // Browser state
     pub selected_puzzle: usize,
@@ -269,21 +269,42 @@ impl GameApp {
     pub fn set_screen(&mut self, screen: AppScreen) {
         if self.screen != screen {
             self.screen = screen;
+            self.screen_timer = 0.0;
             self.bump_rev();
         }
+    }
+
+    fn sync_session_preferences(&mut self) {
+        if let Some(sess) = &mut self.session {
+            sess.set_preferences(
+                self.prefs.grid_lines_on != 0,
+                self.prefs.timer_on != 0,
+                self.prefs.text_msg_on != 0,
+            );
+        }
+    }
+
+    fn toggle_curved_edges(&mut self) {
+        if self.selected_grid_dim != 1 {
+            self.curved_edges = !self.curved_edges;
+            self.bump_rev();
+        }
+    }
+
+    fn return_to_browser(&mut self) {
+        if let Some(session) = &mut self.session {
+            session.cancel_pointer_drag();
+        }
+        self.audio.stop_all();
+        self.audio.play_common(CommonSound::OtherPicture);
+        self.set_screen(AppScreen::Browser);
     }
 
     pub fn set_text_msg_on(&mut self, enabled: bool) {
         let next = u16::from(enabled);
         if self.prefs.text_msg_on != next {
             self.prefs.text_msg_on = next;
-            if let Some(sess) = &mut self.session {
-                sess.set_preferences(
-                    self.prefs.grid_lines_on != 0,
-                    self.prefs.timer_on != 0,
-                    enabled,
-                );
-            }
+            self.sync_session_preferences();
             self.bump_rev();
         }
     }
@@ -339,13 +360,7 @@ impl GameApp {
         self.prefs = self.setup_menu.prefs;
         self.audio
             .set_enabled(self.prefs.music_on != 0, self.prefs.sfx_on != 0);
-        if let Some(ref mut sess) = self.session {
-            sess.set_preferences(
-                self.prefs.grid_lines_on != 0,
-                self.prefs.timer_on != 0,
-                self.prefs.text_msg_on != 0,
-            );
-        }
+        self.sync_session_preferences();
         self.bump_rev();
     }
 
@@ -362,9 +377,8 @@ impl GameApp {
     pub fn start_selected_puzzle(&mut self) {
         if self.can_resume_selected() {
             self.audio.stop_all();
-            self.screen = AppScreen::Playing;
             self.error = None;
-            self.bump_rev();
+            self.set_screen(AppScreen::Playing);
         } else {
             self.restart_selected_puzzle();
         }
@@ -374,7 +388,7 @@ impl GameApp {
         let use_ega = self.prefs.video_mode >= 2;
         match PuzzleAsset::load(&self.game_dir, self.selected_puzzle, use_ega) {
             Ok(asset) => {
-                let mut sess = PuzzleSession::new(
+                let sess = PuzzleSession::new(
                     self.selected_puzzle,
                     asset,
                     self.selected_grid_dim,
@@ -382,23 +396,19 @@ impl GameApp {
                     self.prefs.grid_lines_on != 0,
                     self.prefs.timer_on != 0,
                 );
-                sess.set_preferences(
-                    self.prefs.grid_lines_on != 0,
-                    self.prefs.timer_on != 0,
-                    self.prefs.text_msg_on != 0,
-                );
                 self.session = Some(sess);
+                self.sync_session_preferences();
                 self.session_use_ega = use_ega;
-                self.screen = AppScreen::Playing;
                 self.audio.play_common(CommonSound::StartPuzzle);
                 self.error = None;
+                self.set_screen(AppScreen::Playing);
             }
             Err(err) => {
                 eprintln!("{err}");
                 self.error = Some(err);
+                self.bump_rev();
             }
         }
-        self.bump_rev();
     }
 
     pub fn step_puzzle(&mut self, delta: i32) {
@@ -434,8 +444,7 @@ impl GameApp {
     pub fn open_setup(&mut self, return_to_playing: bool) {
         self.setup_menu.set_prefs(self.prefs);
         self.setup_menu.clear_error();
-        self.screen = AppScreen::Setup { return_to_playing };
-        self.bump_rev();
+        self.set_screen(AppScreen::Setup { return_to_playing });
     }
 
     pub fn exit_setup(&mut self, return_to_playing: bool) {
@@ -458,8 +467,6 @@ impl GameApp {
     }
 
     fn process_input(&mut self, input: &AppInput) {
-        self.screen_timer += input.dt;
-
         // Global shortcut F4 opens Setup from anywhere
         if input.f4 && !matches!(self.screen, AppScreen::Setup { .. }) {
             if let Some(session) = &mut self.session {
@@ -472,9 +479,9 @@ impl GameApp {
 
         match self.screen {
             AppScreen::Title => {
+                self.screen_timer += input.dt;
                 if input.escape {
                     self.set_screen(AppScreen::Browser);
-                    self.screen_timer = 0.0;
                 } else if input.left_pressed
                     || input.space
                     || input.enter
@@ -486,13 +493,12 @@ impl GameApp {
                         AppScreen::Credits { page: 0 }
                     };
                     self.set_screen(next);
-                    self.screen_timer = 0.0;
                 }
             }
             AppScreen::Credits { page } => {
+                self.screen_timer += input.dt;
                 if input.escape {
                     self.set_screen(AppScreen::Browser);
-                    self.screen_timer = 0.0;
                 } else if input.left_pressed
                     || input.space
                     || input.enter
@@ -504,7 +510,6 @@ impl GameApp {
                         AppScreen::Browser
                     };
                     self.set_screen(next);
-                    self.screen_timer = 0.0;
                 }
             }
             AppScreen::Setup { return_to_playing } => {
@@ -546,10 +551,7 @@ impl GameApp {
                 } else if input.down {
                     self.step_grid_dim(-1);
                 } else if input.tab || input.key_e {
-                    if self.selected_grid_dim != 1 {
-                        self.curved_edges = !self.curved_edges;
-                        self.bump_rev();
-                    }
+                    self.toggle_curved_edges();
                 } else if input.enter || input.space {
                     self.start_selected_puzzle();
                 } else if input.key_r {
@@ -561,7 +563,11 @@ impl GameApp {
                 }
             }
             AppScreen::Playing => {
-                let mut open_menu = input.escape;
+                if input.escape {
+                    self.return_to_browser();
+                    return;
+                }
+                let mut open_menu = false;
 
                 if let Some(ref mut sess) = self.session {
                     sess.update(input.dt, &mut self.audio);
@@ -628,12 +634,7 @@ impl GameApp {
                 }
 
                 if open_menu {
-                    if let Some(session) = &mut self.session {
-                        session.cancel_pointer_drag();
-                    }
-                    self.audio.stop_all();
-                    self.audio.play_common(CommonSound::OtherPicture);
-                    self.set_screen(AppScreen::Browser);
+                    self.return_to_browser();
                 }
             }
         }
@@ -648,12 +649,7 @@ impl GameApp {
                         BrowserAction::PrevPuzzle => self.step_puzzle(-1),
                         BrowserAction::NextPuzzle => self.step_puzzle(1),
                         BrowserAction::CyclePieces => self.step_grid_dim(1),
-                        BrowserAction::ToggleEdges => {
-                            if self.selected_grid_dim != 1 {
-                                self.curved_edges = !self.curved_edges;
-                                self.bump_rev();
-                            }
-                        }
+                        BrowserAction::ToggleEdges => self.toggle_curved_edges(),
                         BrowserAction::OpenSetup => {
                             self.open_setup(false);
                         }
