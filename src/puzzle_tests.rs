@@ -590,7 +590,7 @@ impl EcsPuzzleHarness {
             .run_system_once(
                 move |mut commands: Commands,
                       mut active_puzzle: ResMut<ActivePuzzle>,
-                      mut piece_q: Query<(Entity, &PieceIdentity, &mut PieceSprite)>,
+                      mut piece_q: Query<(Entity, &PieceIdentity, &mut PieceGeometry, &mut PieceSprite)>,
                       hotspot_q: Query<Entity, With<SceneHotspot>>,
                       anim_q: Query<Entity, With<AnimationState>>| {
                     let Some(meta) = &mut active_puzzle.0 else {

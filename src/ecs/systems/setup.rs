@@ -25,7 +25,7 @@ pub fn setup_input_system(
     mut config: ResMut<GameConfig>,
     mut browser: ResMut<BrowserState>,
     mut active_puzzle: ResMut<ActivePuzzle>,
-    mut piece_q: Query<(Entity, &PieceIdentity, &mut PieceSprite)>,
+    mut piece_q: Query<(Entity, &PieceIdentity, &mut crate::ecs::components::PieceGeometry, &mut PieceSprite)>,
     hotspot_q: Query<Entity, With<SceneHotspot>>,
     anim_q: Query<Entity, With<AnimationState>>,
     mut audio_out: MessageWriter<AudioCommand>,
@@ -124,7 +124,7 @@ fn exit_setup(
     config: &mut GameConfig,
     browser: &mut BrowserState,
     active_puzzle: &mut ActivePuzzle,
-    piece_q: &mut Query<(Entity, &PieceIdentity, &mut PieceSprite)>,
+    piece_q: &mut Query<(Entity, &PieceIdentity, &mut crate::ecs::components::PieceGeometry, &mut PieceSprite)>,
     hotspot_q: &Query<Entity, With<SceneHotspot>>,
     anim_q: &Query<Entity, With<AnimationState>>,
     audio_out: &mut MessageWriter<AudioCommand>,
@@ -158,7 +158,7 @@ pub fn sync_prefs_from_setup(
     config: &mut GameConfig,
     browser: &mut BrowserState,
     active_puzzle: &mut ActivePuzzle,
-    piece_q: &mut Query<(Entity, &PieceIdentity, &mut PieceSprite)>,
+    piece_q: &mut Query<(Entity, &PieceIdentity, &mut crate::ecs::components::PieceGeometry, &mut PieceSprite)>,
     hotspot_q: &Query<Entity, With<SceneHotspot>>,
     anim_q: &Query<Entity, With<AnimationState>>,
     audio_out: &mut MessageWriter<AudioCommand>,
@@ -219,7 +219,7 @@ pub fn replace_scene_asset_ecs(
     commands: &mut Commands,
     meta: &mut crate::ecs::resources::PuzzleMeta,
     asset: PuzzleAsset,
-    piece_q: &mut Query<(Entity, &PieceIdentity, &mut PieceSprite)>,
+    piece_q: &mut Query<(Entity, &PieceIdentity, &mut crate::ecs::components::PieceGeometry, &mut PieceSprite)>,
     hotspot_q: &Query<Entity, With<SceneHotspot>>,
     anim_q: &Query<Entity, With<AnimationState>>,
 ) {
@@ -235,17 +235,25 @@ pub fn replace_scene_asset_ecs(
 
     let existing_count = piece_q.iter().count();
     if cut_data.len() == existing_count {
-        let mut sprites_by_idx: Vec<Option<crate::assets::Sprite8061>> =
-            cut_data.into_iter().map(|d| Some(d.sprite)).collect();
-        for (_, ident, mut sprite_comp) in piece_q.iter_mut() {
-            if let Some(slot) = sprites_by_idx.get_mut(ident.index)
-                && let Some(new_spr) = slot.take()
+        let mut by_idx: Vec<
+            Option<(
+                crate::ecs::components::PieceGeometry,
+                crate::assets::Sprite8061,
+            )>,
+        > = cut_data
+            .into_iter()
+            .map(|d| Some((d.geometry, d.sprite)))
+            .collect();
+        for (_, ident, mut geom_comp, mut sprite_comp) in piece_q.iter_mut() {
+            if let Some(slot) = by_idx.get_mut(ident.index)
+                && let Some((new_geom, new_spr)) = slot.take()
             {
+                *geom_comp = new_geom;
                 sprite_comp.sprite = new_spr;
             }
         }
     } else {
-        for (e, _, _) in piece_q.iter() {
+        for (e, _, _, _) in piece_q.iter() {
             commands.entity(e).despawn();
         }
         let tray_order = meta.voice_rng.shuffled_indices(cut_data.len());

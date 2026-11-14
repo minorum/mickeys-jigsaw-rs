@@ -181,7 +181,7 @@ fn app_replace_scene_asset(app: &mut App, asset: PuzzleAsset) {
         .run_system_once(
             move |mut commands: Commands,
                   mut active_puzzle: ResMut<ActivePuzzle>,
-                  mut piece_q: Query<(Entity, &PieceIdentity, &mut PieceSprite)>,
+                  mut piece_q: Query<(Entity, &PieceIdentity, &mut PieceGeometry, &mut PieceSprite)>,
                   hotspot_q: Query<Entity, With<SceneHotspot>>,
                   anim_q: Query<Entity, With<AnimationState>>| {
                 let Some(meta) = &mut active_puzzle.0 else {
@@ -271,7 +271,7 @@ fn app_sync_prefs_from_setup(app: &mut App) {
              mut config: ResMut<GameConfig>,
              mut browser: ResMut<BrowserState>,
              mut active_puzzle: ResMut<ActivePuzzle>,
-             mut piece_q: Query<(Entity, &PieceIdentity, &mut PieceSprite)>,
+             mut piece_q: Query<(Entity, &PieceIdentity, &mut PieceGeometry, &mut PieceSprite)>,
              hotspot_q: Query<Entity, With<SceneHotspot>>,
              anim_q: Query<Entity, With<AnimationState>>,
              mut audio_out: MessageWriter<crate::ecs::events::AudioCommand>| {
