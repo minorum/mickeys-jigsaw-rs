@@ -3568,9 +3568,12 @@ fn touch_input_drives_puzzle_drag_placement_tray_and_menus() {
         for pidx in [0usize, 1] {
             sess.tray_order.retain(|&id| id != pidx);
             sess.held_piece = Some(pidx);
+            sess.held_group = vec![(pidx, 0, 0)];
             let px = sess.playfield_x() + sess.pieces[pidx].base_x + sess.pieces[pidx].base_w / 2;
             let py = sess.playfield_y() + sess.pieces[pidx].base_y + sess.pieces[pidx].base_h / 2;
-            sess.handle_pointer_release(px, py, &mut audio);
+            sess.handle_click(px, py, &mut audio);
+            assert!(sess.held_piece.is_none());
+            assert!(sess.pieces[pidx].placed);
         }
     }
     let (c_x, c_y) = {
