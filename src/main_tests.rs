@@ -2844,6 +2844,47 @@ fn in_game_menu_opens_closes_and_navigates_keyboard_and_mouse() {
     });
     assert!(matches!(app.screen, AppScreen::Setup { .. }));
     assert!(!app.in_game_menu_open);
+    app.exit_setup(true);
+
+    // WASD then physical mouse click *without* pointer_moved clears keyboard pointer
+    // and hits physical mouse coordinates instead of stale keyboard pointer.
+    app.open_in_game_menu();
+    app.handle_input(&AppInput {
+        dt: 0.1,
+        move_x: 1,
+        ..Default::default()
+    });
+    assert!(app.session.as_ref().unwrap().keyboard_pointer.is_some());
+    let (r1x, r1y, _, _) = crate::app::in_game_menu_row_rect(1);
+    app.handle_input(&AppInput {
+        pointer_x: r1x + 10,
+        pointer_y: r1y + 5,
+        left_pressed: true,
+        ..Default::default()
+    });
+    assert!(app.session.as_ref().unwrap().keyboard_pointer.is_none());
+    app.handle_input(&AppInput {
+        pointer_x: r1x + 10,
+        pointer_y: r1y + 5,
+        left_released: true,
+        ..Default::default()
+    });
+    assert!(matches!(app.screen, AppScreen::Setup { .. }));
+    app.exit_setup(true);
+
+    // Menu UI clicks (open, Up/Down, empty-handed PieceTray) must not interrupt active captions/speech.
+    app.audio.play_common(crate::audio::CommonSound::NotDoneYet);
+    let active_caption = app.audio.common_caption();
+    assert!(active_caption.is_some());
+    app.open_in_game_menu();
+    assert_eq!(app.audio.common_caption(), active_caption);
+    app.handle_input(&AppInput {
+        down: true,
+        ..Default::default()
+    });
+    assert_eq!(app.audio.common_caption(), active_caption);
+    app.execute_in_game_menu_command(crate::app::InGameMenuCommand::PieceTray);
+    assert_eq!(app.audio.common_caption(), active_caption);
 }
 
 #[test]
@@ -2907,7 +2948,24 @@ fn in_game_menu_commands_other_picture_setup_tray_replay_and_quit() {
     });
     assert!(app.session.as_ref().unwrap().active_anim.is_none());
 
-    // 3. PieceTray returns held piece when holding one, and toggles tray when empty-handed.
+    // 3. PieceTray returns held single piece when holding one, preserves held connected groups,
+    //    and toggles tray when empty-handed.
+    let tray_snapshot_before_group = {
+        let sess = app.session.as_mut().unwrap();
+        let extra = sess.tray_order.pop().unwrap();
+        sess.held_group = vec![(extra, 10, 0)];
+        (extra, sess.tray_order.clone())
+    };
+    app.execute_in_game_menu_command(crate::app::InGameMenuCommand::PieceTray);
+    {
+        let sess = app.session.as_mut().unwrap();
+        assert_eq!(sess.held_piece, held_id);
+        assert_eq!(sess.held_group, vec![(tray_snapshot_before_group.0, 10, 0)]);
+        assert_eq!(sess.tray_order, tray_snapshot_before_group.1);
+        // Restore single held piece for single-piece PieceTray test.
+        let (extra, _, _) = sess.held_group.pop().unwrap();
+        sess.tray_order.push(extra);
+    }
     app.execute_in_game_menu_command(crate::app::InGameMenuCommand::PieceTray);
     {
         let sess = app.session.as_ref().unwrap();

@@ -542,7 +542,7 @@ impl GameApp {
         self.in_game_menu_open = true;
         self.in_game_menu_selected = 0;
         self.in_game_menu_pressed = None;
-        self.audio.play_common(CommonSound::UiClick);
+        self.audio.play_ui_click();
         self.bump_rev();
     }
 
@@ -571,7 +571,7 @@ impl GameApp {
             let cmd = InGameMenuCommand::ALL[idx as usize];
             if self.is_in_game_menu_command_enabled(cmd) {
                 self.in_game_menu_selected = idx as usize;
-                self.audio.play_common(CommonSound::UiClick);
+                self.audio.play_ui_click();
                 self.bump_rev();
                 return;
             }
@@ -591,13 +591,17 @@ impl GameApp {
             InGameMenuCommand::PieceTray => {
                 if let Some(sess) = &mut self.session {
                     if sess.held_piece.is_some() {
-                        sess.return_held_to_tray(&mut self.audio);
-                        if !sess.toolbox_open {
-                            sess.toggle_toolbox();
+                        if sess.held_group.is_empty() {
+                            sess.return_held_to_tray(&mut self.audio);
+                            if !sess.toolbox_open {
+                                sess.toggle_toolbox();
+                            }
+                        } else {
+                            self.audio.play_error();
                         }
                     } else {
                         sess.toggle_toolbox();
-                        self.audio.play_common(CommonSound::UiClick);
+                        self.audio.play_ui_click();
                     }
                 }
                 self.bump_rev();
@@ -1062,7 +1066,11 @@ impl GameApp {
                         return;
                     }
                     if input.left_pressed {
-                        if let Some(cmd) = in_game_menu_command_at(px, py) {
+                        if let Some(sess) = &mut self.session {
+                            sess.clear_keyboard_pointer();
+                        }
+                        if let Some(cmd) = in_game_menu_command_at(input.pointer_x, input.pointer_y)
+                        {
                             if self.is_in_game_menu_command_enabled(cmd) {
                                 self.in_game_menu_pressed = Some(cmd);
                                 if let Some(idx) =
@@ -1074,14 +1082,19 @@ impl GameApp {
                             } else {
                                 self.audio.play_error();
                             }
-                        } else if !in_game_menu_contains(px, py) {
+                        } else if !in_game_menu_contains(input.pointer_x, input.pointer_y) {
                             self.close_in_game_menu(true);
                         }
                         return;
                     }
                     if input.left_released {
+                        if let Some(sess) = &mut self.session {
+                            sess.clear_keyboard_pointer();
+                        }
                         if let Some(pressed_cmd) = self.in_game_menu_pressed.take() {
-                            if in_game_menu_command_at(px, py) == Some(pressed_cmd) {
+                            if in_game_menu_command_at(input.pointer_x, input.pointer_y)
+                                == Some(pressed_cmd)
+                            {
                                 self.execute_in_game_menu_command(pressed_cmd);
                             } else {
                                 self.bump_rev();
