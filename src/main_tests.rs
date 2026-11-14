@@ -1161,12 +1161,9 @@ fn browser_and_puzzle_controls_use_palette_colors() {
         let mut app_renderer = AppRenderer::new();
         app_renderer.render(&app, 160, 100);
         let fb = &app_renderer.fb;
-        assert_eq!(fb.get_pixel(7, 5), fb.color_index([0; 3]), "ega={ega}");
-        assert_eq!(
-            fb.get_pixel(7, 173),
-            fb.color_index([0, 0, 170]),
-            "ega={ega}"
-        );
+        assert_eq!(fb.get_pixel(38, 6), fb.color_index([0; 3]), "ega={ega}");
+        assert_eq!(fb.get_pixel(36, 4), fb.color_index([255; 3]), "ega={ega}");
+        assert_ne!(fb.get_pixel(38, 6), fb.get_pixel(36, 4), "ega={ega}");
     }
 }
 
@@ -1236,12 +1233,12 @@ fn browser_navigation_wraps_and_buttons_align() {
 
     app.selected_grid_dim = 3;
     let edges_was = app.curved_edges;
-    let (_, ex, ew, _) = BROWSER_BUTTONS[3];
-    app.handle_browser_click(ex + ew / 2, 180);
+    let edges_btn = BROWSER_BUTTONS[3];
+    app.handle_browser_click(edges_btn.x + edges_btn.w / 2, edges_btn.y + edges_btn.h / 2);
     assert_ne!(app.curved_edges, edges_was);
 
-    let (_, sx, sw, _) = BROWSER_BUTTONS[4];
-    app.handle_browser_click(sx + sw / 2, 180);
+    let setup_btn = BROWSER_BUTTONS[4];
+    app.handle_browser_click(setup_btn.x + setup_btn.w / 2, setup_btn.y + setup_btn.h / 2);
     assert_eq!(
         app.screen,
         AppScreen::Setup {
@@ -1950,12 +1947,12 @@ fn browser_quit_and_print_buttons_and_hotkeys() {
     assert!(!app.quit_requested);
 
     // Clicking Print button (index 6) sets browser_status.
-    let (action, bx, bw, _) = crate::app::BROWSER_BUTTONS[6];
-    assert_eq!(action, crate::app::BrowserAction::PrintPuzzle);
+    let print_btn = crate::app::BROWSER_BUTTONS[6];
+    assert_eq!(print_btn.action, crate::app::BrowserAction::PrintPuzzle);
     app.handle_input(&AppInput {
         left_pressed: true,
-        pointer_x: bx + bw / 2,
-        pointer_y: 180,
+        pointer_x: print_btn.x + print_btn.w / 2,
+        pointer_y: print_btn.y + print_btn.h / 2,
         ..Default::default()
     });
     assert!(app.browser_status.is_some());
@@ -1969,12 +1966,12 @@ fn browser_quit_and_print_buttons_and_hotkeys() {
     assert!(app.browser_status.is_some());
 
     // Clicking Quit button (index 7) requests quit.
-    let (quit_action, qx, qw, _) = crate::app::BROWSER_BUTTONS[7];
-    assert_eq!(quit_action, crate::app::BrowserAction::QuitGame);
+    let quit_btn = crate::app::BROWSER_BUTTONS[7];
+    assert_eq!(quit_btn.action, crate::app::BrowserAction::QuitGame);
     app.handle_input(&AppInput {
         left_pressed: true,
-        pointer_x: qx + qw / 2,
-        pointer_y: 180,
+        pointer_x: quit_btn.x + quit_btn.w / 2,
+        pointer_y: quit_btn.y + quit_btn.h / 2,
         ..Default::default()
     });
     assert!(app.quit_requested);
@@ -2000,11 +1997,12 @@ fn mickey_cursor_overlay_draws_without_invalidating_base_cache() {
     let mut app = synthetic_app();
     app.set_screen(AppScreen::Browser);
 
-    // Populate synthetic sprites up to index 62 (61=open hand, 62=grab hand) with a solid white pixel at (0,0).
+    // Populate synthetic sprites up to index 64 (62=pointing hand, 63=grab hand, 64=open hand)
+    // with a solid white pixel at (0,0). Hotspot for 62 is (-6, 0).
     let mut palette = [[0u8; 3]; 256];
     palette[1] = [255, 250, 240];
     app.tbx.palette = palette;
-    while app.tbx.sprites.len() <= 62 {
+    while app.tbx.sprites.len() <= 64 {
         app.tbx.sprites.push(crate::assets::Sprite8061::from_8bpp(
             2,
             2,
@@ -2017,7 +2015,7 @@ fn mickey_cursor_overlay_draws_without_invalidating_base_cache() {
 
     let mut renderer = AppRenderer::new();
     assert!(renderer.render_if_needed(&app, 100, 80, false, false));
-    let off_100 = (80 * 320 + 100) * 4;
+    let off_100 = (80 * 320 + (100 - 6)) * 4;
     assert_eq!(
         &renderer.rgba_buf[off_100..off_100 + 4],
         &[255, 250, 240, 255]
@@ -2026,9 +2024,9 @@ fn mickey_cursor_overlay_draws_without_invalidating_base_cache() {
     // Same pointer and state -> no re-render needed.
     assert!(!renderer.render_if_needed(&app, 100, 80, false, false));
 
-    // Moving pointer updates cursor pixel at (140, 90) and restores (100, 80) from base cache.
+    // Moving pointer updates cursor pixel at (140 - 6, 90) and restores (94, 80) from base cache.
     assert!(renderer.render_if_needed(&app, 140, 90, false, false));
-    let off_140 = (90 * 320 + 140) * 4;
+    let off_140 = (90 * 320 + (140 - 6)) * 4;
     assert_eq!(
         &renderer.rgba_buf[off_140..off_140 + 4],
         &[255, 250, 240, 255]
@@ -2045,7 +2043,7 @@ fn wasd_then_mouse_motion_restores_pointer_and_click_target() {
     let mut palette = [[0u8; 3]; 256];
     palette[1] = [255, 250, 240];
     app.tbx.palette = palette;
-    while app.tbx.sprites.len() <= 62 {
+    while app.tbx.sprites.len() <= 64 {
         app.tbx.sprites.push(crate::assets::Sprite8061::from_8bpp(
             2,
             2,
@@ -2088,7 +2086,8 @@ fn wasd_then_mouse_motion_restores_pointer_and_click_target() {
 
     let mut renderer = AppRenderer::new();
     assert!(renderer.render_if_needed(&app, 150, 120, false, false));
-    let off_150 = (120 * 320 + 150) * 4;
+    // Playing idle uses sprite 64 (open hand) with hotspot (-7, 0).
+    let off_150 = (120 * 320 + (150 - 7)) * 4;
     assert_eq!(
         &renderer.rgba_buf[off_150..off_150 + 4],
         &[255, 250, 240, 255]
@@ -2135,4 +2134,168 @@ fn quit_phase_waits_for_active_sfx_with_bounded_fallback() {
         ..Default::default()
     });
     assert!(app.should_exit());
+}
+
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
+#[test]
+fn browser_renders_original_tbx_sprites_in_vga_and_ega() {
+    for ega in [false, true] {
+        let mut app = test_browser();
+        app.setup_menu.prefs.video_mode = if ega { 2 } else { 1 };
+        app.sync_prefs_from_setup();
+        let mut renderer = AppRenderer::new();
+        app.browser_hover = None;
+        app.browser_pressed = None;
+        renderer.render(&app, 160, 100);
+        let fb = &renderer.fb;
+
+        // Left sidebar (0..32) and right sidebar (304..320) have non-uniform original sprite pixels.
+        let left_colors: std::collections::HashSet<u8> =
+            (10..50).map(|y| fb.get_pixel(16, y)).collect();
+        assert!(left_colors.len() > 1, "left sidebar empty for ega={ega}");
+
+        let right_colors: std::collections::HashSet<u8> =
+            (4..30).map(|y| fb.get_pixel(312, y)).collect();
+        assert!(
+            right_colors.len() > 1,
+            "right MORE header empty for ega={ega}"
+        );
+
+        // Print (36, 160) and OK (199, 160) button frames render multi-color TBX sprites.
+        let print_colors: std::collections::HashSet<u8> =
+            (165..185).map(|y| fb.get_pixel(60, y)).collect();
+        assert!(
+            print_colors.len() > 1,
+            "Print TBX sprite empty for ega={ega}"
+        );
+
+        let ok_colors: std::collections::HashSet<u8> =
+            (212..234).map(|x| fb.get_pixel(x, 175)).collect();
+        assert!(ok_colors.len() > 1, "OK TBX sprite empty for ega={ega}");
+    }
+}
+
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
+#[test]
+fn browser_hover_pressed_and_right_sidebar_slot_selection() {
+    let mut app = test_browser();
+    let mut renderer = AppRenderer::new();
+
+    // Initial render
+    assert!(renderer.render_if_needed(&app, 160, 80, false, false));
+
+    // Hovering over NextPuzzle changes browser_hover and triggers a re-render.
+    let next_btn = BROWSER_BUTTONS[1];
+    assert_eq!(next_btn.action, crate::app::BrowserAction::NextPuzzle);
+    app.handle_input(&AppInput {
+        pointer_x: next_btn.x + next_btn.w / 2,
+        pointer_y: next_btn.y + next_btn.h / 2,
+        pointer_moved: true,
+        ..Default::default()
+    });
+    assert_eq!(
+        app.browser_hover,
+        Some(crate::app::BrowserTarget::Button(
+            crate::app::BrowserAction::NextPuzzle
+        ))
+    );
+    assert!(renderer.render_if_needed(
+        &app,
+        next_btn.x + next_btn.w / 2,
+        next_btn.y + next_btn.h / 2,
+        false,
+        false
+    ));
+
+    // Clicking right-sidebar slot 5 selects puzzle 5 and sets browser_pressed until release.
+    let slot5_y = crate::app::BROWSER_SLOT_Y0 + 4 * crate::app::BROWSER_SLOT_H + 5;
+    app.handle_input(&AppInput {
+        pointer_x: 312,
+        pointer_y: slot5_y,
+        left_pressed: true,
+        ..Default::default()
+    });
+    assert_eq!(app.selected_puzzle, 5);
+    assert_eq!(
+        app.browser_pressed,
+        Some(crate::app::BrowserTarget::PuzzleSlot(5))
+    );
+    app.handle_input(&AppInput {
+        pointer_x: 312,
+        pointer_y: slot5_y,
+        left_released: true,
+        ..Default::default()
+    });
+    assert!(app.browser_pressed.is_none());
+}
+
+#[test]
+fn mickey_cursor_uses_correct_sprites_hotspots_and_viewport_bounds() {
+    let mut app = synthetic_app();
+    let mut palette = [[0u8; 3]; 256];
+    palette[62] = [255, 0, 0];
+    palette[63] = [0, 255, 0];
+    palette[64] = [0, 0, 255];
+    app.tbx.palette = palette;
+    for idx in 0..=64u8 {
+        let color = if idx >= 62 { idx } else { 1 };
+        app.tbx.sprites.push(crate::assets::Sprite8061::from_8bpp(
+            1,
+            1,
+            0,
+            vec![color],
+            vec![true],
+        ));
+    }
+
+    let mut renderer = AppRenderer::new();
+
+    // Browser idle -> sprite 62 (red), hotspot (-6, 0).
+    app.set_screen(AppScreen::Browser);
+    renderer.render_if_needed(&app, 100, 80, false, false);
+    let off_62 = (80 * 320 + (100 - 6)) * 4;
+    assert_eq!(&renderer.rgba_buf[off_62..off_62 + 4], &[255, 0, 0, 255]);
+
+    // Browser pressed -> sprite 63 (green), hotspot (-10, 0).
+    app.browser_pressed = Some(crate::app::BrowserTarget::PuzzleSlot(1));
+    renderer.render_if_needed(&app, 100, 80, false, false);
+    let off_63 = (80 * 320 + (100 - 10)) * 4;
+    assert_eq!(&renderer.rgba_buf[off_63..off_63 + 4], &[0, 255, 0, 255]);
+    app.browser_pressed = None;
+
+    // Playing idle -> sprite 64 (blue), hotspot (-7, 0).
+    app.session = Some(PuzzleSession::new(
+        1,
+        app.preview_asset.clone(),
+        2,
+        false,
+        false,
+        false,
+    ));
+    app.set_screen(AppScreen::Playing);
+    assert_eq!(app.screen, AppScreen::Playing);
+    renderer.render_if_needed(&app, 100, 80, false, false);
+    let off_64 = (80 * 320 + (100 - 7)) * 4;
+    assert_eq!(&renderer.rgba_buf[off_64..off_64 + 4], &[0, 0, 255, 255]);
+
+    // Playing over open toolbox (px < 46) -> sprite 62 (red), hotspot (-6, 0).
+    app.session.as_mut().unwrap().toolbox_open = true;
+    renderer.render_if_needed(&app, 20, 80, false, false);
+    let off_62_tbx = (80 * 320 + (20 - 6)) * 4;
+    assert_eq!(
+        &renderer.rgba_buf[off_62_tbx..off_62_tbx + 4],
+        &[255, 0, 0, 255]
+    );
+    app.session.as_mut().unwrap().toolbox_open = false;
+
+    // Out-of-viewport pointer -> cursor is not drawn and stays cached as None.
+    assert!(renderer.render_if_needed(&app, -1, 80, false, false));
+    assert!(!renderer.render_if_needed(&app, 320, 80, false, false));
+    assert_ne!(&renderer.rgba_buf[off_64..off_64 + 4], &[0, 0, 255, 255]);
 }

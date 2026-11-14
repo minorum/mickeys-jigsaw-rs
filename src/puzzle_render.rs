@@ -715,23 +715,51 @@ fn draw_anim_bubble(
 
 /// Draws the original decorative playfield frame using `MJP.TBX` sprites `0x38..0x3C` (`FUN_1b43_0363`).
 pub fn draw_playfield_border(fb: &mut Framebuffer, tbx: &ToolboxAsset, x_left: i32, width: i32) {
+    draw_playfield_border_inner(fb, tbx, x_left, width, None);
+}
+
+/// Draws the decorative playfield frame remapping `MJP.TBX` palette indices via `remap`.
+pub fn draw_playfield_border_remapped(
+    fb: &mut Framebuffer,
+    tbx: &ToolboxAsset,
+    x_left: i32,
+    width: i32,
+    remap: &[u8; 256],
+) {
+    draw_playfield_border_inner(fb, tbx, x_left, width, Some(remap));
+}
+
+fn draw_playfield_border_inner(
+    fb: &mut Framebuffer,
+    tbx: &ToolboxAsset,
+    x_left: i32,
+    width: i32,
+    remap: Option<&[u8; 256]>,
+) {
+    let blit = |fb: &mut Framebuffer, spr, x, y| {
+        if let Some(table) = remap {
+            fb.blit_sprite_remapped(spr, x, y, 0, table);
+        } else {
+            fb.blit_sprite(spr, x, y, 0);
+        }
+    };
     if tbx.sprites.len() > 0x3C {
         let mut y = 0;
         while y < SCREEN_H {
-            fb.blit_sprite(&tbx.sprites[0x3A], x_left, y, 0);
-            fb.blit_sprite(&tbx.sprites[0x3B], x_left + width, y, 0);
+            blit(fb, &tbx.sprites[0x3A], x_left, y);
+            blit(fb, &tbx.sprites[0x3B], x_left + width, y);
             y += 20;
         }
         let mut dx = 0;
         while dx < width {
-            fb.blit_sprite(&tbx.sprites[0x38], x_left + dx, 0, 0);
-            fb.blit_sprite(&tbx.sprites[0x39], x_left + dx, 198, 0);
+            blit(fb, &tbx.sprites[0x38], x_left + dx, 0);
+            blit(fb, &tbx.sprites[0x39], x_left + dx, 198);
             dx += 34;
         }
-        fb.blit_sprite(&tbx.sprites[0x3C], x_left - 1, -2, 0);
-        fb.blit_sprite(&tbx.sprites[0x3C], x_left - 1, 198, 0);
-        fb.blit_sprite(&tbx.sprites[0x3C], x_left + width, -2, 0);
-        fb.blit_sprite(&tbx.sprites[0x3C], x_left + width, 198, 0);
+        blit(fb, &tbx.sprites[0x3C], x_left - 1, -2);
+        blit(fb, &tbx.sprites[0x3C], x_left - 1, 198);
+        blit(fb, &tbx.sprites[0x3C], x_left + width, -2);
+        blit(fb, &tbx.sprites[0x3C], x_left + width, 198);
     } else {
         fb.draw_rect_outline(x_left, 0, width + 2, SCREEN_H, 14);
     }
