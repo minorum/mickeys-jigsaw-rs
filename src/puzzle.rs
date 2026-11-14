@@ -416,9 +416,12 @@ impl PuzzleSession {
         assert_eq!(asset.id, self.puzzle_num);
         Self::render_full_picture_into(&asset, &mut self.full_picture_fb);
         let old_placed: Vec<bool> = self.pieces.iter().map(|p| p.placed).collect();
+        let old_board_cells = std::mem::take(&mut self.board_cells);
         let old_tray_order = std::mem::take(&mut self.tray_order);
         let old_tray_scroll = self.tray_scroll;
         let old_held = self.held_piece;
+        let old_held_group = std::mem::take(&mut self.held_group);
+        let old_held_group_anchor = self.held_group_anchor.take();
         let old_solved = self.solved;
 
         self.asset = asset;
@@ -428,10 +431,15 @@ impl PuzzleSession {
             for (new_piece, placed) in self.pieces.iter_mut().zip(old_placed) {
                 new_piece.placed = placed;
             }
+            if old_board_cells.len() == self.board_cells.len() {
+                self.board_cells = old_board_cells;
+            }
             self.tray_order = old_tray_order;
             self.tray_scroll = old_tray_scroll;
             self.clamp_tray_scroll();
             self.held_piece = old_held;
+            self.held_group = old_held_group;
+            self.held_group_anchor = old_held_group_anchor;
             self.solved = old_solved;
         } else {
             self.hint_piece = None;
@@ -851,10 +859,10 @@ impl PuzzleSession {
         }
     }
 
-    /// Piece hint (`F1`).
-    pub fn trigger_hint(&mut self) {
+    /// Piece hint (`F1`). Returns `true` if a hint was issued.
+    pub fn trigger_hint(&mut self) -> bool {
         if self.solved {
-            return;
+            return false;
         }
         let target_idx = self
             .held_piece
@@ -864,6 +872,9 @@ impl PuzzleSession {
         if let Some(pidx) = target_idx {
             self.hint_piece = Some((pidx, 1.5));
             self.bump_visual();
+            true
+        } else {
+            false
         }
     }
 

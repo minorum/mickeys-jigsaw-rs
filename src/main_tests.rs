@@ -1869,3 +1869,22 @@ fn in_game_hotkeys_toggle_music_sfx_timer_and_text_messages() {
     assert_eq!(sess.timer_enabled, app.prefs.timer_on != 0);
     assert_eq!(sess.text_enabled, app.prefs.text_msg_on != 0);
 }
+
+#[test]
+fn f1_during_solved_animation_does_not_play_hint_cue() {
+    let mut app = synthetic_app();
+    let mut session = PuzzleSession::new(1, app.preview_asset.clone(), 2, true, false, false);
+    session.auto_solve(&mut app.audio);
+    assert!(session.solved);
+    assert!(session.active_anim.is_some());
+    assert!(app.audio.common_caption().is_none());
+
+    app.session = Some(session);
+    app.set_screen(AppScreen::Playing);
+    app.handle_input(&AppInput {
+        f1: true,
+        ..Default::default()
+    });
+
+    assert!(app.audio.common_caption().is_none());
+}

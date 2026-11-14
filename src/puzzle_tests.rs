@@ -2283,3 +2283,102 @@ fn completion_time_message_formatted_when_timer_enabled() {
     assert!(session.solved);
     assert_eq!(session.status_message(), Some("Your time was 1:01:01"));
 }
+
+#[test]
+fn replace_scene_asset_preserves_board_cells_and_held_group() {
+    let vga_asset = synthetic_puzzle_asset(1, false);
+    let ega_asset = synthetic_puzzle_asset(1, true);
+    let mut session = PuzzleSession::new(1, vga_asset, 4, false, false, false);
+    let mut audio = AudioEngine::new(Path::new("."), false, false);
+
+    // Place piece 13 (3, 1) at compatible cell (3, 2) = index 14.
+    pick_piece_from_tray(&mut session, 13, &mut audio);
+    let (x32, y32) = cell_center_screen(&session, 3, 2);
+    session.handle_click(x32, y32, &mut audio);
+    assert_eq!(session.board_cells[14], Some(13));
+
+    // Place pieces 1 (0, 1) and 5 (1, 1) and pick them up as a 2-piece held group.
+    pick_piece_from_tray(&mut session, 1, &mut audio);
+    let (x01, y01) = cell_center_screen(&session, 0, 1);
+    session.handle_click(x01, y01, &mut audio);
+    pick_piece_from_tray(&mut session, 5, &mut audio);
+    let (x11, y11) = cell_center_screen(&session, 1, 1);
+    session.handle_click(x11, y11, &mut audio);
+    assert!(session.handle_right_click(x01, y01, &mut audio));
+    assert_eq!(session.held_piece, Some(1));
+    assert_eq!(session.held_group.len(), 2);
+
+    // Switch video mode mid-puzzle via replace_scene_asset.
+    session.replace_scene_asset(ega_asset);
+    assert_eq!(session.board_cells[14], Some(13));
+    assert!(session.pieces[13].placed);
+    assert_eq!(session.held_piece, Some(1));
+    assert_eq!(session.held_group.len(), 2);
+
+    // Place the preserved held group onto (0, 2)/(1, 2), then pick up piece 13 from (3, 2).
+    let (x02, y02) = cell_center_screen(&session, 0, 2);
+    session.handle_click(x02, y02, &mut audio);
+    assert!(session.held_piece.is_none());
+    assert_eq!(session.board_cells[2], Some(1));
+    assert_eq!(session.board_cells[6], Some(5));
+
+    session.handle_click(x32, y32, &mut audio);
+    assert_eq!(session.held_piece, Some(13));
+    assert_eq!(session.board_cells[14], None);
+}
+
+#[test]
+fn blend_picture_guide_protects_non_anchor_held_group_pixels_matching_board_bg() {
+    let mut palette = [[0u8; 3]; 256];
+    palette[1] = [10, 20, 220];
+    palette[7] = [204, 204, 187];
+    let asset = PuzzleAsset {
+        id: 1,
+        palette,
+        records: vec![SceneRecord::Frame {
+            bg_frame_idx: 0,
+            bg_color: 1,
+            commands: vec![],
+        }],
+        sequences: Vec::new(),
+        hotspots: Vec::new(),
+        full_anim_seq_idx: 0,
+        sounds: Vec::new(),
+        sprites: Vec::new(),
+    };
+    let mut session = PuzzleSession::new(1, asset, 4, false, false, false);
+    let mut audio = AudioEngine::new(Path::new("."), false, false);
+    let mut renderer = PuzzleRenderer::new();
+
+    // Pick up pieces 1 (anchor) and 5 (non-anchor) as a 2-piece connected group.
+    pick_piece_from_tray(&mut session, 1, &mut audio);
+    let (x01, y01) = cell_center_screen(&session, 0, 1);
+    session.handle_click(x01, y01, &mut audio);
+    pick_piece_from_tray(&mut session, 5, &mut audio);
+    let (x11, y11) = cell_center_screen(&session, 1, 1);
+    session.handle_click(x11, y11, &mut audio);
+    assert!(session.handle_right_click(x01, y01, &mut audio));
+    assert_eq!(session.held_group.len(), 2);
+
+    let bg_rgba = [204u8, 204, 187, 255];
+    let mut rgba = bg_rgba.repeat(320 * 200);
+    let pointer_x = x01;
+    let pointer_y = y01;
+    renderer.blend_picture_guide(&session, &mut rgba, pointer_x, pointer_y);
+
+    // Center of non-anchor piece 5 (which had board_bg color in rgba) must remain protected.
+    let (_, cell_dx, cell_dy) = session.held_group_offsets()[1];
+    let anchor = &session.pieces[1];
+    let piece5 = &session.pieces[5];
+    let sx = (pointer_x - anchor.base_w / 2 + cell_dx + piece5.target_x - piece5.base_x
+        + piece5.base_w / 2) as usize;
+    let sy = (pointer_y - anchor.base_h / 2 + cell_dy + piece5.target_y - piece5.base_y
+        + piece5.base_h / 2) as usize;
+    let off = (sy * 320 + sx) * 4;
+    assert_eq!(&rgba[off..off + 4], &bg_rgba);
+
+    // Uncovered empty cell (3, 3) should have been blended with the blue guide picture.
+    let (x33, y33) = cell_center_screen(&session, 3, 3);
+    let empty_off = (y33 as usize * 320 + x33 as usize) * 4;
+    assert_ne!(&rgba[empty_off..empty_off + 4], &bg_rgba);
+}

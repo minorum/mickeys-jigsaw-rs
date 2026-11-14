@@ -650,8 +650,7 @@ impl GameApp {
                     } else if input.space && !sess.solved {
                         sess.toggle_toolbox();
                     }
-                    if input.f1 {
-                        sess.trigger_hint();
+                    if input.f1 && sess.trigger_hint() {
                         self.audio.play_common(CommonSound::SeeWhatHappens);
                     }
                     if input.f2 {
