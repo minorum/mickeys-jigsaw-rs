@@ -74,8 +74,8 @@ impl Framebuffer {
     pub fn set_clip(&mut self, x: i32, y: i32, w: i32, h: i32) {
         let x0 = x.clamp(0, SCREEN_W);
         let y0 = y.clamp(0, SCREEN_H);
-        let x1 = (x + w).clamp(0, SCREEN_W);
-        let y1 = (y + h).clamp(0, SCREEN_H);
+        let x1 = x.saturating_add(w).clamp(0, SCREEN_W);
+        let y1 = y.saturating_add(h).clamp(0, SCREEN_H);
         self.clip_x = x0;
         self.clip_y = y0;
         self.clip_w = (x1 - x0).max(0);
@@ -139,8 +139,8 @@ impl Framebuffer {
     pub fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: u8) {
         let x0 = x.max(self.clip_x);
         let y0 = y.max(self.clip_y);
-        let x1 = (x + w).min(self.clip_x + self.clip_w);
-        let y1 = (y + h).min(self.clip_y + self.clip_h);
+        let x1 = x.saturating_add(w).min(self.clip_x + self.clip_w);
+        let y1 = y.saturating_add(h).min(self.clip_y + self.clip_h);
         if x0 >= x1 || y0 >= y1 {
             return;
         }
@@ -169,8 +169,8 @@ impl Framebuffer {
         }
         let x0 = x.max(self.clip_x);
         let y0 = y.max(self.clip_y);
-        let x1 = (x + w).min(self.clip_x + self.clip_w);
-        let y1 = (y + h).min(self.clip_y + self.clip_h);
+        let x1 = x.saturating_add(w).min(self.clip_x + self.clip_w);
+        let y1 = y.saturating_add(h).min(self.clip_y + self.clip_h);
         if x0 >= x1 || y0 >= y1 {
             return;
         }
@@ -328,8 +328,8 @@ impl Framebuffer {
         let scale = (w as f32 / spr.width as f32)
             .min(h as f32 / spr.sub_h as f32)
             .min(1.0);
-        let dw = (spr.width as f32 * scale).max(1.0) as i32;
-        let dh = (spr.sub_h as f32 * scale).max(1.0) as i32;
+        let dw = ((spr.width as f32 * scale).max(1.0) as i32).min(w);
+        let dh = ((spr.sub_h as f32 * scale).max(1.0) as i32).min(h);
         let ox = x + (w - dw) / 2;
         let oy = y + (h - dh) / 2;
         let dy_start = (self.clip_y - oy).max(0);
@@ -360,11 +360,20 @@ impl Framebuffer {
             let sy = sub_y + (dy as usize) * spr_h / dh_u;
             let row_off = sy * stride + sub_x;
             let dst_row = ((oy + dy) * SCREEN_W + ox) as usize;
-            for dx in dx_start..dx_end {
-                let idx = row_off + (dx as usize) * spr_w / dw_u;
-                let opaque = opacity.map_or_else(|| spr.pixels[idx] != trans, |mask| mask[idx]);
-                if opaque {
-                    self.pixels[dst_row + dx as usize] = spr.pixels[idx];
+            if let Some(mask) = opacity {
+                for dx in dx_start..dx_end {
+                    let idx = row_off + (dx as usize) * spr_w / dw_u;
+                    if mask[idx] {
+                        self.pixels[dst_row + dx as usize] = spr.pixels[idx];
+                    }
+                }
+            } else {
+                for dx in dx_start..dx_end {
+                    let idx = row_off + (dx as usize) * spr_w / dw_u;
+                    let px = spr.pixels[idx];
+                    if px != trans {
+                        self.pixels[dst_row + dx as usize] = px;
+                    }
                 }
             }
         }
@@ -1886,5 +1895,31 @@ mod tests {
         fb.blit_thumbnail(&short_opacity, 0, 0, 4, 4);
         fb.blit_sprite(&short_opacity, 0, 0, 0);
         assert_eq!(fb.get_pixel(0, 0), 3);
+    }
+
+    #[test]
+    fn blit_thumbnail_clips_all_edges_and_respects_opacity() {
+        let mut fb = Framebuffer::new();
+        fb.clear(9);
+        let mut pixels = vec![7u8; 8 * 8];
+        pixels[0] = 0; // transparent_color
+        let mut opacity = vec![true; 8 * 8];
+        // At (ox=9, oy=9, dw=6, dh=6), dst (13, 13) samples src (4*8/6=5, 4*8/6=5).
+        opacity[8 * 5 + 5] = false;
+        let spr = Sprite8061::from_8bpp(8, 8, 0, pixels, opacity);
+
+        fb.set_clip(10, 10, 4, 4);
+        fb.blit_thumbnail(&spr, 9, 9, 6, 6);
+        for y in 0..SCREEN_H {
+            for x in 0..SCREEN_W {
+                let inside_clip = (10..14).contains(&x) && (10..14).contains(&y);
+                let expected = if !inside_clip || (x == 13 && y == 13) {
+                    9
+                } else {
+                    7
+                };
+                assert_eq!(fb.get_pixel(x, y), expected, "at ({x}, {y})");
+            }
+        }
     }
 }

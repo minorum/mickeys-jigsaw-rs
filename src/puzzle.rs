@@ -258,6 +258,7 @@ pub struct PuzzleSession {
     pub(crate) grid_polylines_h: Vec<Vec<(i32, i32)>>,
     asset_rev: u64,
     board_rev: u64,
+    tray_rev: u64,
     visual_rev: u64,
 }
 
@@ -300,6 +301,7 @@ impl PuzzleSession {
             grid_polylines_h: Vec::new(),
             asset_rev: 1,
             board_rev: 1,
+            tray_rev: 1,
             visual_rev: 1,
         };
         session.cut_pieces();
@@ -308,6 +310,12 @@ impl PuzzleSession {
 
     #[inline]
     fn bump_visual(&mut self) {
+        self.visual_rev = self.visual_rev.wrapping_add(1);
+    }
+
+    #[inline]
+    fn bump_tray(&mut self) {
+        self.tray_rev = self.tray_rev.wrapping_add(1);
         self.visual_rev = self.visual_rev.wrapping_add(1);
     }
 
@@ -335,6 +343,10 @@ impl PuzzleSession {
 
     pub fn board_rev(&self) -> u64 {
         self.board_rev
+    }
+
+    pub fn tray_rev(&self) -> u64 {
+        self.tray_rev
     }
 
     pub fn visual_rev(&self) -> u64 {
@@ -757,6 +769,7 @@ impl PuzzleSession {
         self.held_piece = None;
         self.drag_origin = None;
         self.solved = false;
+        self.bump_tray();
     }
 
     /// Number of pieces visible at once in the left-hand tray (`1..=5` depending on piece size).
@@ -795,7 +808,7 @@ impl PuzzleSession {
             self.clamp_tray_scroll();
         }
         if self.tray_scroll != prev {
-            self.bump_visual();
+            self.bump_tray();
         }
     }
 
@@ -1264,7 +1277,7 @@ impl PuzzleSession {
                 let insert_at = tray_pos.min(self.tray_order.len());
                 self.tray_order.insert(insert_at, held);
                 audio.play_common(CommonSound::ReturnPiece);
-                self.bump_visual();
+                self.bump_tray();
             } else if tray_pos < self.tray_order.len() {
                 let pidx = self.tray_order.remove(tray_pos);
                 self.held_piece = Some(pidx);
@@ -1272,7 +1285,7 @@ impl PuzzleSession {
                     self.tray_scroll = self.tray_order.len().saturating_sub(1);
                 }
                 audio.play_common(CommonSound::ChoosePiece);
-                self.bump_visual();
+                self.bump_tray();
             }
             return None;
         }

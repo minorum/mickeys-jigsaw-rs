@@ -2,7 +2,7 @@
 
 use crate::assets::{FontAsset, FrameCommand, PuzzleAsset, SceneRecord, ToolboxAsset};
 use crate::graphics::{
-    Framebuffer, SCENE_OFFSET_X, SCREEN_H, apply_dissolve_step, copy_scene_interior,
+    Framebuffer, SCENE_OFFSET_X, SCREEN_H, SCREEN_W, apply_dissolve_step, copy_scene_interior,
     render_scene_frame, render_scene_view_with_scratch,
 };
 use crate::puzzle::{
@@ -43,6 +43,17 @@ struct BoardStateKey {
     asset_rev: u64,
     board_rev: u64,
 }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct ToolboxCacheKey {
+    session_id: u64,
+    asset_rev: u64,
+    board_rev: u64,
+    tray_rev: u64,
+    hovered_slot: Option<usize>,
+}
+
+const TOOLBOX_STRIP_W: usize = (TOOLBOX_W - 2) as usize;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct AnimFrameCacheKey {
@@ -98,6 +109,7 @@ pub struct PuzzleRenderer {
     anim_fb: Option<(AnimFrameCacheKey, Box<Framebuffer>)>,
     placed_mask: Option<(BoardStateKey, Vec<bool>)>,
     board_fb: Option<(BoardStateKey, Box<Framebuffer>)>,
+    toolbox_strip: Option<(ToolboxCacheKey, Vec<u8>)>,
 }
 
 impl Default for PuzzleRenderer {
@@ -119,6 +131,7 @@ impl PuzzleRenderer {
             anim_fb: None,
             placed_mask: None,
             board_fb: None,
+            toolbox_strip: None,
         }
     }
 
@@ -129,6 +142,7 @@ impl PuzzleRenderer {
         self.anim_fb = None;
         self.placed_mask = None;
         self.board_fb = None;
+        self.toolbox_strip = None;
     }
 
     fn ensure_placed_mask(&mut self, key: BoardStateKey, pieces: &[JigsawPiece]) {
@@ -331,13 +345,11 @@ impl PuzzleRenderer {
         let bg_rgba = [bg_rgb[0], bg_rgb[1], bg_rgb[2], 255];
         let (rgba_chunks, _) = rgba.as_chunks_mut::<4>();
         let pw = PLAYFIELD_W as usize;
-        let held_bounds = session.held_piece.map(|index| {
+        let held_info = session.held_piece.map(|index| {
             let piece = &session.pieces[index];
-            (
-                piece,
-                pointer_x - piece.base_w / 2 + piece.target_x - piece.base_x - pfx,
-                pointer_y - piece.base_h / 2 + piece.target_y - piece.base_y - pfy,
-            )
+            let hx = pointer_x - piece.base_w / 2 + piece.target_x - piece.base_x - pfx;
+            let hy = pointer_y - piece.base_h / 2 + piece.target_y - piece.base_y - pfy;
+            (piece, hx, hy)
         });
         self.ensure_placed_mask(mask_key, &session.pieces);
         let placed_cov = &self.placed_mask.as_ref().unwrap().1;
@@ -349,7 +361,7 @@ impl PuzzleRenderer {
             let cov_slice = &placed_cov[cov_row..cov_row + pw];
             let guide_row = &self.guide_playfield[cov_row..cov_row + pw];
 
-            let held_span = held_bounds.and_then(|(piece, hx, hy)| {
+            let held_span = held_info.and_then(|(piece, hx, hy)| {
                 let dy = y - hy;
                 if !(0..piece.sprite.sub_h as i32).contains(&dy) {
                     return None;
@@ -364,16 +376,51 @@ impl PuzzleRenderer {
                 })
             });
 
-            for x in 0..pw {
-                if !cov_slice[x]
-                    && dst_row[x] == bg_rgba
-                    && held_span.is_none_or(|(piece, hx, row_off, x0, x1)| {
-                        !(x0..x1).contains(&x)
-                            || !piece.sprite.is_opaque(row_off + (x as i32 - hx) as usize)
-                    })
+            if let Some((piece, hx, row_off, x0, x1)) = held_span {
+                apply_guide_span(
+                    &mut dst_row[..x0],
+                    &guide_row[..x0],
+                    &cov_slice[..x0],
+                    bg_rgba,
+                );
+                let src_start = row_off + (x0 as i32 - hx) as usize;
+                let src_len = x1 - x0;
+                if let Some(mask) = piece.sprite.opacity.as_deref()
+                    && src_start + src_len <= mask.len()
                 {
-                    dst_row[x] = guide_row[x];
+                    let mask_span = &mask[src_start..src_start + src_len];
+                    for (((d, &g), &c), &op) in dst_row[x0..x1]
+                        .iter_mut()
+                        .zip(&guide_row[x0..x1])
+                        .zip(&cov_slice[x0..x1])
+                        .zip(mask_span)
+                    {
+                        if !c && !op && *d == bg_rgba {
+                            *d = g;
+                        }
+                    }
+                } else if src_start + src_len <= piece.sprite.pixels.len() {
+                    let px_span = &piece.sprite.pixels[src_start..src_start + src_len];
+                    let trans = piece.sprite.transparent_color;
+                    for (((d, &g), &c), &px) in dst_row[x0..x1]
+                        .iter_mut()
+                        .zip(&guide_row[x0..x1])
+                        .zip(&cov_slice[x0..x1])
+                        .zip(px_span)
+                    {
+                        if !c && px == trans && *d == bg_rgba {
+                            *d = g;
+                        }
+                    }
                 }
+                apply_guide_span(
+                    &mut dst_row[x1..],
+                    &guide_row[x1..],
+                    &cov_slice[x1..],
+                    bg_rgba,
+                );
+            } else {
+                apply_guide_span(dst_row, guide_row, cov_slice, bg_rgba);
             }
         }
     }
@@ -442,7 +489,7 @@ impl PuzzleRenderer {
         }
 
         if session.toolbox_open {
-            self.render_toolbox(session, fb, font, pointer_x, pointer_y);
+            self.ensure_toolbox(session, fb, font, pointer_x, pointer_y);
         }
 
         // Draw status message if active
@@ -535,13 +582,54 @@ impl PuzzleRenderer {
         }
     }
 
-    fn render_toolbox(
-        &self,
+    fn ensure_toolbox(
+        &mut self,
         session: &PuzzleSession,
         fb: &mut Framebuffer,
         font: &FontAsset,
         pointer_x: i32,
         pointer_y: i32,
+    ) {
+        let hovered_slot = session.hovered_tray_slot(pointer_x, pointer_y);
+        let key = ToolboxCacheKey {
+            session_id: session.session_id(),
+            asset_rev: session.asset_rev(),
+            board_rev: session.board_rev(),
+            tray_rev: session.tray_rev(),
+            hovered_slot,
+        };
+        if let Some((cached_key, strip)) = &self.toolbox_strip
+            && *cached_key == key
+        {
+            for y in 0..SCREEN_H as usize {
+                let dst_off = y * SCREEN_W as usize;
+                let src_off = y * TOOLBOX_STRIP_W;
+                fb.pixels[dst_off..dst_off + TOOLBOX_STRIP_W]
+                    .copy_from_slice(&strip[src_off..src_off + TOOLBOX_STRIP_W]);
+            }
+            return;
+        }
+        self.render_toolbox(session, fb, font, hovered_slot);
+        let mut strip = self
+            .toolbox_strip
+            .take()
+            .map(|(_, buf)| buf)
+            .unwrap_or_else(|| vec![0u8; TOOLBOX_STRIP_W * SCREEN_H as usize]);
+        for y in 0..SCREEN_H as usize {
+            let src_off = y * SCREEN_W as usize;
+            let dst_off = y * TOOLBOX_STRIP_W;
+            strip[dst_off..dst_off + TOOLBOX_STRIP_W]
+                .copy_from_slice(&fb.pixels[src_off..src_off + TOOLBOX_STRIP_W]);
+        }
+        self.toolbox_strip = Some((key, strip));
+    }
+
+    fn render_toolbox(
+        &self,
+        session: &PuzzleSession,
+        fb: &mut Framebuffer,
+        font: &FontAsset,
+        hovered_slot: Option<usize>,
     ) {
         let colors = self.ui_colors;
         fb.fill_rect(0, 0, TOOLBOX_W - 2, SCREEN_H, colors.black);
@@ -576,7 +664,6 @@ impl PuzzleRenderer {
         // Visible unplaced pieces in tray (`y = 30..186`)
         let vis = session.visible_tray_slots();
         let slot_h = session.tray_slot_height();
-        let hovered_slot = session.hovered_tray_slot(pointer_x, pointer_y);
         fb.set_clip(2, 30, TOOLBOX_W - 6, 156);
         for slot in 0..vis {
             let tray_idx = session.tray_scroll + slot;
@@ -595,6 +682,16 @@ impl PuzzleRenderer {
             }
         }
         fb.reset_clip();
+    }
+}
+
+#[inline(always)]
+fn apply_guide_span(dst: &mut [[u8; 4]], guide: &[[u8; 4]], cov: &[bool], bg_rgba: [u8; 4]) {
+    let len = dst.len().min(guide.len()).min(cov.len());
+    for x in 0..len {
+        if !cov[x] && dst[x] == bg_rgba {
+            dst[x] = guide[x];
+        }
     }
 }
 
