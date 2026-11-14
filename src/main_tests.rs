@@ -1689,3 +1689,39 @@ fn playing_escape_exits_without_updating_session_on_exit_frame() {
     assert!(!session.solved);
     assert_eq!(session.elapsed_secs, 0.0);
 }
+
+#[test]
+fn title_ignores_non_finite_and_negative_dt() {
+    let mut app = synthetic_app();
+    app.screen = AppScreen::Title;
+    for dt in [f32::NAN, f32::NEG_INFINITY, -5.0] {
+        app.handle_input(&AppInput {
+            dt,
+            ..Default::default()
+        });
+        assert_eq!(app.screen, AppScreen::Title);
+    }
+    app.handle_input(&AppInput {
+        dt: 8.1,
+        ..Default::default()
+    });
+    assert_eq!(app.screen, AppScreen::Browser);
+}
+
+#[test]
+fn setup_left_on_save_and_return_does_not_activate_save() {
+    let mut app = synthetic_app();
+    app.open_setup(false);
+    app.setup_menu.selected_row = 6;
+    app.handle_input(&AppInput {
+        left: true,
+        ..Default::default()
+    });
+    assert_eq!(
+        app.screen,
+        AppScreen::Setup {
+            return_to_playing: false
+        }
+    );
+    assert!(app.setup_menu.error.is_none());
+}

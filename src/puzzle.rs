@@ -817,7 +817,10 @@ impl PuzzleSession {
         if self.solved {
             return;
         }
-        let target_idx = self.held_piece.or_else(|| self.tray_order.first().copied());
+        let target_idx = self
+            .held_piece
+            .or_else(|| self.tray_order.get(self.tray_scroll).copied())
+            .or_else(|| self.tray_order.first().copied());
         if let Some(pidx) = target_idx {
             self.hint_piece = Some((pidx, 1.5));
             self.bump_visual();
@@ -1159,8 +1162,9 @@ impl PuzzleSession {
 
     pub fn move_keyboard_pointer(&mut self, dx: f32, dy: f32, dt: f32) {
         self.cancel_pointer_drag();
+        let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
         let (x, y) = self.keyboard_pointer.unwrap_or((20.0, 40.0));
-        let step = 120.0 * dt.max(0.0) / dx.hypot(dy).max(1.0);
+        let step = 120.0 * dt / dx.hypot(dy).max(1.0);
         let next = (
             (x + dx * step).clamp(0.0, 319.0),
             (y + dy * step).clamp(0.0, 199.0),
@@ -1173,6 +1177,9 @@ impl PuzzleSession {
 
     pub fn handle_keyboard_activate(&mut self, audio: &mut AudioEngine) -> Option<PuzzleAction> {
         self.cancel_pointer_drag();
+        if self.active_anim.is_some() {
+            return self.handle_click(0, 0, audio);
+        }
         let had_pointer = self.keyboard_pointer.is_some();
         let (x, y) = *self.keyboard_pointer.get_or_insert((20.0, 40.0));
         if !had_pointer {
