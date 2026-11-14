@@ -15,7 +15,7 @@ use crate::assets::{
 use crate::audio::{AudioEngine, CommonSound};
 use crate::graphics::{
     Framebuffer, SCENE_OFFSET_X, compute_frame_bounds, dissolve_visible_step, hit_test_frame,
-    render_scene_frame,
+    rasterize_polygon, render_scene_frame,
 };
 
 pub const PLAYFIELD_W: i32 = 270;
@@ -254,7 +254,7 @@ pub struct PuzzleSession {
     pub(crate) active_anim: Option<AnimationPlayer>,
     voice_rng: LcgRng,
     pub(crate) status_message: Option<(String, f32)>,
-    pub(crate) full_picture_fb: Framebuffer,
+    pub(crate) full_picture_fb: Box<Framebuffer>,
     pub(crate) grid_polylines_v: Vec<Vec<(i32, i32)>>,
     pub(crate) grid_polylines_h: Vec<Vec<(i32, i32)>>,
     asset_rev: u64,
@@ -374,27 +374,22 @@ impl PuzzleSession {
         }
     }
 
-    fn render_full_picture(asset: &PuzzleAsset) -> Framebuffer {
-        let mut full_picture_fb = Framebuffer::new();
-        full_picture_fb.palette = asset.palette;
+    fn render_full_picture_into(asset: &PuzzleAsset, fb: &mut Framebuffer) {
+        fb.reset_clip();
+        fb.palette = asset.palette;
         let static_frame_idx = asset.static_frame_idx();
-        render_scene_frame(
-            &mut full_picture_fb,
-            asset,
-            static_frame_idx,
-            0,
-            0,
-            0,
-            true,
-            0,
-            0,
-        );
+        render_scene_frame(fb, asset, static_frame_idx, 0, 0, 0, true, 0, 0);
+    }
+
+    fn render_full_picture(asset: &PuzzleAsset) -> Box<Framebuffer> {
+        let mut full_picture_fb = Box::new(Framebuffer::new());
+        Self::render_full_picture_into(asset, &mut full_picture_fb);
         full_picture_fb
     }
 
     pub fn replace_scene_asset(&mut self, asset: PuzzleAsset) {
         assert_eq!(asset.id, self.puzzle_num);
-        let full_picture_fb = Self::render_full_picture(&asset);
+        Self::render_full_picture_into(&asset, &mut self.full_picture_fb);
         let old_placed: Vec<bool> = self.pieces.iter().map(|p| p.placed).collect();
         let old_tray_order = std::mem::take(&mut self.tray_order);
         let old_tray_scroll = self.tray_scroll;
@@ -402,7 +397,6 @@ impl PuzzleSession {
         let old_solved = self.solved;
 
         self.asset = asset;
-        self.full_picture_fb = full_picture_fb;
         self.cut_pieces();
 
         if self.pieces.len() == old_placed.len() {
@@ -466,16 +460,17 @@ impl PuzzleSession {
         };
 
         // Shared vertical & horizontal borders: `(variant 0..3, dir -1 or +1)`
-        let mut v_edges = vec![vec![(0usize, 1i32); dim + 1]; dim];
-        for row in &mut v_edges {
-            for edge in row.iter_mut().take(dim).skip(1) {
-                *edge = next_edge();
+        let v_stride = dim + 1;
+        let mut v_edges = vec![(0usize, 1i32); dim * v_stride];
+        for r in 0..dim {
+            for c in 1..dim {
+                v_edges[r * v_stride + c] = next_edge();
             }
         }
-        let mut h_edges = vec![vec![(0usize, 1i32); dim]; dim + 1];
-        for row in h_edges.iter_mut().take(dim).skip(1) {
-            for edge in row {
-                *edge = next_edge();
+        let mut h_edges = vec![(0usize, 1i32); (dim + 1) * dim];
+        for r in 1..dim {
+            for c in 0..dim {
+                h_edges[r * dim + c] = next_edge();
             }
         }
 
@@ -488,7 +483,7 @@ impl PuzzleSession {
             for r in 0..dim {
                 let by = row_y[r];
                 if self.curved_edges {
-                    let (variant, dir) = v_edges[r][c];
+                    let (variant, dir) = v_edges[r * v_stride + c];
                     let (_, pts) = vert_edge_curve(dim, variant);
                     for &(dx, dy) in pts {
                         line.push((bx + (dx as i32) * dir, by + (dy as i32)));
@@ -507,7 +502,7 @@ impl PuzzleSession {
             for c in 0..dim {
                 let bx = col_x[c];
                 if self.curved_edges {
-                    let (variant, dir) = h_edges[r][c];
+                    let (variant, dir) = h_edges[r * dim + c];
                     let (_, pts) = horiz_edge_curve(dim, variant);
                     for &(dx, dy) in pts {
                         line.push((bx + (dx as i32), by + (dy as i32) * dir));
@@ -518,11 +513,11 @@ impl PuzzleSession {
             self.grid_polylines_h.push(line);
         }
 
-        // Cut each piece using an offscreen mask framebuffer (`FUN_1e59_011c`)
+        // Cut each piece directly into its local `(tw, th)` mask and pixel buffer (`FUN_1e59_011c`)
         let mut pieces = Vec::with_capacity(dim * dim);
-        let mut mask_fb = Framebuffer::new();
         let mut poly = Vec::with_capacity(48);
-        // Source picture uses playfield coordinates `2..272, 2..198` (or centered `(25, 2)`)
+        let mut nodes = Vec::with_capacity(48);
+        // Source picture uses playfield coordinates `2..272, 2..198`
         let src_ox = 2;
         let src_oy = 2;
 
@@ -536,10 +531,24 @@ impl PuzzleSession {
 
                 // `(active, is_vert, edge, origin_x, origin_y, tab_out_dir)`
                 let borders = [
-                    (c > 0, true, v_edges[r][c], bx, by, -1),
-                    (c + 1 < dim, true, v_edges[r][c + 1], bx + bw, by, 1),
-                    (r > 0, false, h_edges[r][c], bx, by, -1),
-                    (r + 1 < dim, false, h_edges[r + 1][c], bx, by + bh, 1),
+                    (c > 0, true, v_edges[r * v_stride + c], bx, by, -1),
+                    (
+                        c + 1 < dim,
+                        true,
+                        v_edges[r * v_stride + c + 1],
+                        bx + bw,
+                        by,
+                        1,
+                    ),
+                    (r > 0, false, h_edges[r * dim + c], bx, by, -1),
+                    (
+                        r + 1 < dim,
+                        false,
+                        h_edges[(r + 1) * dim + c],
+                        bx,
+                        by + bh,
+                        1,
+                    ),
                 ];
 
                 let mut pads = [0i32; 4];
@@ -559,9 +568,11 @@ impl PuzzleSession {
                 let tw = bw + pad_left + pad_right;
                 let th = bh + pad_top + pad_bottom;
 
-                // Build mask in `mask_fb` (`1` = inside piece, `0` = transparent)
-                mask_fb.clear(0);
-                mask_fb.fill_rect(bx, by, bw, bh, 1);
+                let mut opacity = vec![false; (tw * th) as usize];
+                for dy in pad_top..pad_top + bh {
+                    let row = (dy * tw) as usize;
+                    opacity[row + pad_left as usize..row + (pad_left + bw) as usize].fill(true);
+                }
 
                 if self.curved_edges {
                     for &(active, is_vert, (var, dir), ex, ey, out_dir) in &borders {
@@ -569,50 +580,54 @@ impl PuzzleSession {
                             continue;
                         }
                         let (_, pts) = edge_curve(is_vert, dim, var);
+                        let lx = ex - tx;
+                        let ly = ey - ty;
                         poly.clear();
                         poly.extend(pts.iter().map(|&(dx, dy)| {
                             if is_vert {
-                                (ex + (dx as i32) * dir, ey + (dy as i32))
+                                (lx + (dx as i32) * dir, ly + (dy as i32))
                             } else {
-                                (ex + (dx as i32), ey + (dy as i32) * dir)
+                                (lx + (dx as i32), ly + (dy as i32) * dir)
                             }
                         }));
-                        let fill_val = u8::from(dir == out_dir);
-                        mask_fb.fill_polygon(&poly, fill_val);
-                        // `fill_polygon` skips `min_y` on horizontal edges extending downward (`dir == 1`),
+                        let fill_val = dir == out_dir;
+                        rasterize_polygon(&poly, 0, 0, 0, 0, tw, th, &mut nodes, |y, x0, x1| {
+                            let row = (y * tw) as usize;
+                            opacity[row + x0 as usize..=row + x1 as usize].fill(fill_val);
+                        });
+                        // `rasterize_polygon` skips `min_y` on horizontal edges extending downward (`dir == 1`),
                         // which would leave a 1px bridge across downward blanks and a 1px gap above tabs.
-                        if !is_vert && dir == 1 {
+                        if !is_vert && dir == 1 && (0..th).contains(&ly) {
                             let (mut x_min, mut x_max) = (i32::MAX, i32::MIN);
                             for &(px, py) in &poly {
-                                if py == ey {
+                                if py == ly {
                                     x_min = x_min.min(px);
                                     x_max = x_max.max(px);
                                 }
                             }
-                            if x_min <= x_max {
-                                mask_fb.fill_rect(x_min, ey, x_max - x_min + 1, 1, fill_val);
+                            let x0 = x_min.max(0);
+                            let x1 = x_max.min(tw - 1);
+                            if x0 <= x1 {
+                                let row = (ly * tw) as usize;
+                                opacity[row + x0 as usize..=row + x1 as usize].fill(fill_val);
                             }
                         }
                     }
                 }
 
                 let trans = 0xF8u8;
-                let mut px_buf = vec![trans; (tw * th) as usize];
-                let mut opacity = vec![false; px_buf.len()];
-                for dy in 0..th {
-                    let py = ty + dy;
-                    if !(0..crate::graphics::SCREEN_H).contains(&py) {
-                        continue;
-                    }
-                    let mask_row = (py as usize) * 320;
-                    let src_row = ((src_oy + py) as usize) * 320;
+                let mut px_buf = vec![trans; opacity.len()];
+                let dy_start = (-ty).max(0);
+                let dy_end = (PLAYFIELD_H - ty).min(th);
+                let dx_start = (-tx).max(0);
+                let dx_end = (PLAYFIELD_W - tx).min(tw);
+                for dy in dy_start..dy_end {
+                    let src_row = ((src_oy + ty + dy) as usize) * 320 + (src_ox + tx) as usize;
                     let dst_row = (dy * tw) as usize;
-                    for dx in 0..tw {
-                        let px = tx + dx;
-                        if (0..320).contains(&px) && mask_fb.pixels[mask_row + px as usize] != 0 {
-                            px_buf[dst_row + dx as usize] =
-                                self.full_picture_fb.pixels[src_row + (src_ox + px) as usize];
-                            opacity[dst_row + dx as usize] = true;
+                    for dx in dx_start..dx_end {
+                        let i = dst_row + dx as usize;
+                        if opacity[i] {
+                            px_buf[i] = self.full_picture_fb.pixels[src_row + dx as usize];
                         }
                     }
                 }
@@ -641,8 +656,8 @@ impl PuzzleSession {
 
     fn cut_preset_pieces(&mut self) {
         let mut pieces = Vec::new();
-        let mut pixels = Framebuffer::new();
-        let mut mask = Framebuffer::new();
+        let mut pixels = Box::new(Framebuffer::new());
+        let mut mask = Box::new(Framebuffer::new());
         if let Some(SceneRecord::Frame { commands, .. }) =
             self.asset.records.get(self.asset.preset_frame_idx())
         {
@@ -673,8 +688,8 @@ impl PuzzleSession {
                 if width == 0 || height == 0 {
                     continue;
                 }
-                pixels.clear(0);
-                pixels.set_clip(2, 2, PLAYFIELD_W, PLAYFIELD_H);
+                pixels.set_clip(left, top, width, height);
+                pixels.fill_rect(left, top, width, height, 0);
                 render_scene_frame(
                     &mut pixels,
                     &self.asset,
@@ -686,8 +701,8 @@ impl PuzzleSession {
                     0,
                     1,
                 );
-                mask.clear(0);
-                mask.set_clip(2, 2, PLAYFIELD_W, PLAYFIELD_H);
+                mask.set_clip(left, top, width, height);
+                mask.fill_rect(left, top, width, height, 0);
                 render_scene_frame(
                     &mut mask,
                     &self.asset,

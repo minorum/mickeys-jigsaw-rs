@@ -241,21 +241,33 @@ impl Sprite8061 {
             ));
         }
         let mut pixels = Vec::with_capacity(total_px);
+        let w = stride as usize;
+        let h = height as usize;
 
-        if bpp == 8 {
-            let copy_len = raw.len().min(total_px);
-            pixels.extend_from_slice(&raw[..copy_len]);
-            pixels.resize(total_px, transparent_color);
-        } else {
-            // 4-bit (EGA) or 2-bit (CGA) packed pixels, MSB first
-            let ppb = 8 / bpp as usize;
-            let mask = (1u8 << bpp) - 1;
-            let row_bytes = (stride as usize).div_ceil(ppb);
-            for y in 0..(height as usize) {
-                let row = &raw[y * row_bytes..];
-                for x in 0..(stride as usize) {
-                    let shift = (ppb - 1 - (x % ppb)) * bpp as usize;
-                    pixels.push((row[x / ppb] >> shift) & mask);
+        match bpp {
+            8 => pixels.extend_from_slice(&raw[..total_px]),
+            4 => {
+                // 4-bit packed nibbles (`TND0` / EGA): high nibble first, then low nibble
+                let row_bytes = w.div_ceil(2);
+                let pairs = w / 2;
+                let odd = (w & 1) != 0;
+                for row in raw.chunks_exact(row_bytes).take(h) {
+                    for &b in &row[..pairs] {
+                        pixels.extend_from_slice(&[b >> 4, b & 0x0F]);
+                    }
+                    if odd {
+                        pixels.push(row[pairs] >> 4);
+                    }
+                }
+            }
+            _ => {
+                // 2-bit packed crumbs (CGA), MSB first
+                let row_bytes = w.div_ceil(4);
+                for row in raw.chunks_exact(row_bytes).take(h) {
+                    for x in 0..w {
+                        let shift = 6 - ((x & 3) * 2);
+                        pixels.push((row[x >> 2] >> shift) & 0x03);
+                    }
                 }
             }
         }
@@ -1576,5 +1588,33 @@ mod tests {
         assert_eq!(tag, b"PALE");
         assert_eq!(chunk, &[1, 2, 3]);
         assert_eq!(pos, valid.len());
+    }
+
+    #[test]
+    fn packed_4bpp_and_2bpp_odd_stride_sprites_unpack_correctly() {
+        let make_header = |stride: u16, height: u16, bpp: u8| {
+            let mut rec = vec![0u8; 26];
+            rec[0..2].copy_from_slice(&0x8061u16.to_le_bytes());
+            rec[10..12].copy_from_slice(&stride.to_le_bytes());
+            rec[12..14].copy_from_slice(&height.to_le_bytes());
+            rec[16] = bpp;
+            rec[22..24].copy_from_slice(&stride.to_le_bytes());
+            rec[24..26].copy_from_slice(&height.to_le_bytes());
+            rec
+        };
+
+        let mut rec4 = make_header(3, 2, 4);
+        rec4.extend_from_slice(&[0x12, 0x30, 0xAB, 0xC0]);
+        let spr4 = Sprite8061::from_record(&rec4).unwrap();
+        assert_eq!(spr4.pixels, vec![1, 2, 3, 0xA, 0xB, 0xC]);
+        rec4.pop();
+        assert!(Sprite8061::from_record(&rec4).is_err());
+
+        let mut rec2 = make_header(3, 2, 2);
+        rec2.extend_from_slice(&[0b01_10_11_00, 0b11_01_00_00]);
+        let spr2 = Sprite8061::from_record(&rec2).unwrap();
+        assert_eq!(spr2.pixels, vec![1, 2, 3, 3, 1, 0]);
+        rec2.pop();
+        assert!(Sprite8061::from_record(&rec2).is_err());
     }
 }

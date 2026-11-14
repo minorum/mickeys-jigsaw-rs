@@ -271,10 +271,12 @@ impl Framebuffer {
         let len = (dx_end - dx_start) as usize;
         let dst_x0 = (x + dx_start) as usize;
         let required_len = (spr.height as usize) * stride;
-        let opacity = spr.opacity.as_deref().filter(|m| m.len() >= required_len);
-        if spr.pixels.len() < required_len {
+        if spr.pixels.len() < required_len
+            || spr.opacity.as_ref().is_some_and(|m| m.len() < required_len)
+        {
             return;
         }
+        let opacity = spr.opacity.as_deref();
 
         for dy in dy_start..dy_end {
             let py = y + dy;
@@ -339,19 +341,27 @@ impl Framebuffer {
         let sub_y = spr.sub_y as usize;
         let spr_w = spr.width as usize;
         let spr_h = spr.sub_h as usize;
+        let required_len = (spr.height as usize) * stride;
+        if spr.pixels.len() < required_len
+            || sub_x + spr_w > stride
+            || sub_y + spr_h > spr.height as usize
+            || spr.opacity.as_ref().is_some_and(|m| m.len() < required_len)
+        {
+            return;
+        }
+        let opacity = spr.opacity.as_deref();
         let dw_u = dw as usize;
         let dh_u = dh as usize;
+        let trans = spr.transparent_color;
         for dy in dy_start..dy_end {
             let sy = sub_y + (dy as usize) * spr_h / dh_u;
             let row_off = sy * stride + sub_x;
             let dst_row = ((oy + dy) * SCREEN_W + ox) as usize;
             for dx in dx_start..dx_end {
-                let sx = (dx as usize) * spr_w / dw_u;
-                let idx = row_off + sx;
-                if let Some(&color) = spr.pixels.get(idx)
-                    && spr.is_opaque(idx)
-                {
-                    self.pixels[dst_row + dx as usize] = color;
+                let idx = row_off + (dx as usize) * spr_w / dw_u;
+                let opaque = opacity.map_or_else(|| spr.pixels[idx] != trans, |mask| mask[idx]);
+                if opaque {
+                    self.pixels[dst_row + dx as usize] = spr.pixels[idx];
                 }
             }
         }
@@ -424,42 +434,21 @@ impl Framebuffer {
     }
 
     pub fn fill_polygon_offset(&mut self, pts: &[(i32, i32)], ox: i32, oy: i32, color: u8) {
-        if pts.len() < 3 {
-            return;
-        }
-        let mut min_y = i32::MAX;
-        let mut max_y = i32::MIN;
-        for &(_, y) in pts {
-            let py = y + oy;
-            min_y = min_y.min(py);
-            max_y = max_y.max(py);
-        }
-        min_y = min_y.max(self.clip_y);
-        max_y = max_y.min(self.clip_y + self.clip_h - 1);
-
         let mut nodes = Vec::with_capacity(pts.len());
-        for y in min_y..=max_y {
-            nodes.clear();
-            let mut j = pts.len() - 1;
-            for i in 0..pts.len() {
-                let (xi, yi) = (pts[i].0 + ox, pts[i].1 + oy);
-                let (xj, yj) = (pts[j].0 + ox, pts[j].1 + oy);
-                if (yi < y && yj >= y) || (yj < y && yi >= y) {
-                    let x = xi + (((y - yi) as i64 * (xj - xi) as i64) / (yj - yi) as i64) as i32;
-                    nodes.push(x);
-                }
-                j = i;
-            }
-            nodes.sort_unstable();
-            for pair in nodes.as_chunks::<2>().0 {
-                let x0 = pair[0].max(self.clip_x);
-                let x1 = pair[1].min(self.clip_x + self.clip_w - 1);
-                if x0 <= x1 {
-                    let row = (y * SCREEN_W) as usize;
-                    self.pixels[row + (x0 as usize)..=row + (x1 as usize)].fill(color);
-                }
-            }
-        }
+        rasterize_polygon(
+            pts,
+            ox,
+            oy,
+            self.clip_x,
+            self.clip_y,
+            self.clip_w,
+            self.clip_h,
+            &mut nodes,
+            |y, x0, x1| {
+                let row = (y * SCREEN_W) as usize;
+                self.pixels[row + (x0 as usize)..=row + (x1 as usize)].fill(color);
+            },
+        );
     }
 
     pub fn draw_polygon_outline_offset(&mut self, pts: &[(i32, i32)], ox: i32, oy: i32, color: u8) {
@@ -512,6 +501,61 @@ impl Framebuffer {
         let (chunks, _) = out.as_chunks_mut::<4>();
         for (&px, dst) in self.pixels.iter().zip(chunks) {
             *dst = lut[px as usize];
+        }
+    }
+}
+
+/// Scanline polygon rasterizer using the `VGA.BIN` half-open Y rule `(yi < y && yj >= y)`.
+///
+/// Calls `fill_span(y, x0, x1)` with inclusive clipped bounds `x0 <= x1` for each scanline.
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn rasterize_polygon(
+    pts: &[(i32, i32)],
+    ox: i32,
+    oy: i32,
+    clip_x: i32,
+    clip_y: i32,
+    clip_w: i32,
+    clip_h: i32,
+    nodes: &mut Vec<i32>,
+    mut fill_span: impl FnMut(i32, i32, i32),
+) {
+    if pts.len() < 3 || clip_w <= 0 || clip_h <= 0 {
+        return;
+    }
+    let mut min_y = i32::MAX;
+    let mut max_y = i32::MIN;
+    for &(_, y) in pts {
+        let py = (y as i64 + oy as i64).clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+        min_y = min_y.min(py);
+        max_y = max_y.max(py);
+    }
+    min_y = min_y.max(clip_y);
+    max_y = max_y.min(clip_y + clip_h - 1);
+    let clip_x1 = clip_x + clip_w - 1;
+
+    for y in min_y..=max_y {
+        nodes.clear();
+        let y128 = y as i128;
+        let mut j = pts.len() - 1;
+        for i in 0..pts.len() {
+            let xi = pts[i].0 as i128 + ox as i128;
+            let yi = pts[i].1 as i128 + oy as i128;
+            let xj = pts[j].0 as i128 + ox as i128;
+            let yj = pts[j].1 as i128 + oy as i128;
+            if (yi < y128 && yj >= y128) || (yj < y128 && yi >= y128) {
+                let x = xi + ((y128 - yi) * (xj - xi)) / (yj - yi);
+                nodes.push(x.clamp(i32::MIN as i128, i32::MAX as i128) as i32);
+            }
+            j = i;
+        }
+        nodes.sort_unstable();
+        for pair in nodes.as_chunks::<2>().0 {
+            let x0 = pair[0].max(clip_x);
+            let x1 = pair[1].min(clip_x1);
+            if x0 <= x1 {
+                fill_span(y, x0, x1);
+            }
         }
     }
 }
@@ -971,26 +1015,6 @@ fn dissolve_playfield_order(ega: bool) -> &'static [(u16, u16)] {
     })
 }
 
-pub fn render_scene_dissolve(
-    fb: &mut Framebuffer,
-    puzzle: &PuzzleAsset,
-    previous_frame: usize,
-    frame: usize,
-    progress: f32,
-) {
-    let mut scratch = Framebuffer::new();
-    let mut next = Framebuffer::new();
-    render_scene_dissolve_with_scratch(
-        fb,
-        &mut scratch,
-        &mut next,
-        puzzle,
-        previous_frame,
-        frame,
-        progress,
-    );
-}
-
 pub fn dissolve_visible_step(ega: bool, progress: f32) -> usize {
     let playfield = dissolve_playfield_order(ega);
     if !progress.is_finite() || progress <= 0.0 {
@@ -1030,6 +1054,7 @@ pub fn apply_dissolve_step(
     overlay_dissolve_pixels(fb, next, ega, progress);
 }
 
+#[cfg(test)]
 pub fn render_scene_dissolve_with_scratch(
     fb: &mut Framebuffer,
     scratch: &mut Framebuffer,
@@ -1787,5 +1812,82 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn fill_polygon_offset_handles_extreme_signed_offsets() {
+        let mut fb = Framebuffer::new();
+        fb.clear(0);
+        fb.fill_polygon_offset(
+            &[(i32::MIN, i32::MIN), (i32::MAX, i32::MIN), (0, i32::MAX)],
+            -10,
+            -10,
+            7,
+        );
+        assert_eq!(fb.get_pixel(10, 10), 7);
+
+        fb.clear(0);
+        fb.fill_polygon_offset(
+            &[
+                (i32::MIN, i32::MIN),
+                (i32::MAX, i32::MAX),
+                (i32::MIN, i32::MAX),
+            ],
+            0,
+            -1,
+            9,
+        );
+        assert_eq!(fb.get_pixel(0, 0), 9);
+    }
+
+    #[test]
+    fn blit_thumbnail_ignores_truncated_or_out_of_bounds_sprites() {
+        let mut fb = Framebuffer::new();
+        fb.clear(3);
+        let truncated = Sprite8061 {
+            stride: 4,
+            height: 4,
+            transparent_color: 0,
+            bpp: 8,
+            sub_x: 0,
+            sub_y: 0,
+            width: 4,
+            sub_h: 4,
+            pixels: vec![1; 8],
+            opacity: None,
+        };
+        fb.blit_thumbnail(&truncated, 0, 0, 4, 4);
+        assert_eq!(fb.get_pixel(0, 0), 3);
+
+        let oob_sub = Sprite8061 {
+            stride: 4,
+            height: 4,
+            transparent_color: 0,
+            bpp: 8,
+            sub_x: 2,
+            sub_y: 0,
+            width: 4,
+            sub_h: 4,
+            pixels: vec![1; 16],
+            opacity: None,
+        };
+        fb.blit_thumbnail(&oob_sub, 0, 0, 4, 4);
+        assert_eq!(fb.get_pixel(0, 0), 3);
+
+        let short_opacity = Sprite8061 {
+            stride: 4,
+            height: 4,
+            transparent_color: 0,
+            bpp: 8,
+            sub_x: 0,
+            sub_y: 0,
+            width: 4,
+            sub_h: 4,
+            pixels: vec![1; 16],
+            opacity: Some(vec![true; 8]),
+        };
+        fb.blit_thumbnail(&short_opacity, 0, 0, 4, 4);
+        fb.blit_sprite(&short_opacity, 0, 0, 0);
+        assert_eq!(fb.get_pixel(0, 0), 3);
     }
 }
