@@ -1063,7 +1063,7 @@ impl AppRenderer {
         }
     }
 
-    fn desired_cursor(
+    pub(crate) fn desired_cursor(
         app: &GameApp,
         mx: i32,
         my: i32,
@@ -1085,8 +1085,18 @@ impl AppRenderer {
         let sprite_idx = match app.screen {
             AppScreen::Playing => match app.session.as_ref() {
                 Some(_) if app.confirm_exit_puzzle => 62,
-                Some(sess) if sess.held_piece.is_some() => 63,
-                Some(sess) if (sess.toolbox_open && px < 46) || sess.solved => 62,
+                Some(sess)
+                    if sess.held_piece.is_some() || sess.pressed_toolbox_target.is_some() =>
+                {
+                    63
+                }
+                Some(sess)
+                    if sess.toolbox_target_at(px, py).is_some()
+                        || (sess.toolbox_open && px < 46)
+                        || sess.solved =>
+                {
+                    62
+                }
                 Some(_) => 64,
                 None => 62,
             },

@@ -198,13 +198,23 @@ impl LcgRng {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolboxTarget {
+    Menu,
+    ScrollUp,
+    ScrollDown,
+    TraySlot(usize),
+    ClosedTab,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PointerVisualState {
     Anim {
         dissolve_step: usize,
     },
     Solved,
     Board {
-        hovered_slot: Option<usize>,
+        hovered_toolbox: Option<ToolboxTarget>,
+        pressed_toolbox: Option<ToolboxTarget>,
         held_piece_pos: Option<(usize, i32, i32)>,
     },
 }
@@ -260,6 +270,7 @@ pub struct PuzzleSession {
     held_group_anchor: Option<(usize, usize)>,
     pub(crate) keyboard_pointer: Option<(f32, f32)>,
     drag_origin: Option<(i32, i32)>,
+    pub(crate) pressed_toolbox_target: Option<ToolboxTarget>,
     pub(crate) hint_piece: Option<(usize, f32)>,
     pub(crate) solved: bool,
     pending_completion_feedback: bool,
@@ -323,6 +334,7 @@ impl PuzzleSession {
             held_group_anchor: None,
             keyboard_pointer: None,
             drag_origin: None,
+            pressed_toolbox_target: None,
             hint_piece: None,
             solved: false,
             pending_completion_feedback: false,
@@ -856,9 +868,9 @@ impl PuzzleSession {
         self.tray_scroll = self.tray_scroll.min(max_scroll);
     }
 
-    pub fn scroll_tray(&mut self, delta: i32) {
+    pub fn scroll_tray(&mut self, delta: i32) -> bool {
         if !self.toolbox_open || self.solved {
-            return;
+            return false;
         }
         let prev = self.tray_scroll;
         if delta < 0 {
@@ -871,6 +883,9 @@ impl PuzzleSession {
         }
         if self.tray_scroll != prev {
             self.bump_tray();
+            true
+        } else {
+            false
         }
     }
 
@@ -1282,6 +1297,7 @@ impl PuzzleSession {
             return;
         }
         self.cancel_pointer_drag();
+        self.pressed_toolbox_target = None;
         self.toolbox_open = !self.toolbox_open;
         self.bump_board();
     }
@@ -1294,8 +1310,14 @@ impl PuzzleSession {
     ) -> Option<PuzzleAction> {
         self.clear_keyboard_pointer();
         self.drag_origin = None;
+        let pressed = self.toolbox_target_at(mx, my);
         let was_holding = self.held_piece.is_some();
         let action = self.handle_click(mx, my, audio);
+        self.pressed_toolbox_target = if action == Some(PuzzleAction::OpenMenu) {
+            None
+        } else {
+            pressed
+        };
         if !was_holding && self.held_piece.is_some() {
             self.drag_origin = Some((mx, my));
         }
@@ -1303,6 +1325,7 @@ impl PuzzleSession {
     }
 
     pub fn handle_pointer_release(&mut self, mx: i32, my: i32, audio: &mut AudioEngine) {
+        self.pressed_toolbox_target = None;
         let Some((start_x, start_y)) = self.drag_origin.take() else {
             return;
         };
@@ -1356,12 +1379,16 @@ impl PuzzleSession {
             }
             // Up scroll arrow (`y = 18..30`)
             if my < 30 {
-                self.scroll_tray(-1);
+                if self.scroll_tray(-1) {
+                    audio.play_ui_click();
+                }
                 return None;
             }
             // Down scroll arrow (`y = 186..200`)
             if my >= 186 {
-                self.scroll_tray(1);
+                if self.scroll_tray(1) {
+                    audio.play_ui_click();
+                }
                 return None;
             }
             // Tray piece slots (`y = 30..186`)
@@ -1391,12 +1418,18 @@ impl PuzzleSession {
                 self.held_piece = Some(pidx);
                 self.held_group.clear();
                 self.held_group_anchor = None;
-                if self.tray_scroll > 0 && self.tray_scroll >= self.tray_order.len() {
-                    self.tray_scroll = self.tray_order.len().saturating_sub(1);
+                if self.tray_scroll >= self.tray_order.len() {
+                    self.clamp_tray_scroll();
                 }
                 audio.play_common(CommonSound::ChoosePiece);
                 self.bump_tray();
             }
+            return None;
+        }
+
+        if self.toolbox_target_at(mx, my) == Some(ToolboxTarget::ClosedTab) {
+            self.toolbox_open = true;
+            self.bump_board();
             return None;
         }
 
@@ -1445,9 +1478,6 @@ impl PuzzleSession {
                     audio.play_error();
                 }
             }
-        } else if mx < 16 && my < 16 && !self.toolbox_open {
-            self.toolbox_open = true;
-            self.bump_board();
         } else if self.grid_dim > 1
             && let Some((r, c)) = self.grid_cell_at(mx - pfx, my - pfy)
             && let Some(placed_idx) = self
@@ -1788,17 +1818,41 @@ impl PuzzleSession {
         self.bump_visual();
     }
 
-    pub fn hovered_tray_slot(&self, mouse_x: i32, mouse_y: i32) -> Option<usize> {
-        if !self.toolbox_open || !(2..44).contains(&mouse_x) || mouse_y < 30 {
+    /// Returns the interactive Toolbox control under `(mouse_x, mouse_y)`, if any.
+    pub fn toolbox_target_at(&self, mouse_x: i32, mouse_y: i32) -> Option<ToolboxTarget> {
+        if self.solved || self.active_anim.is_some() {
             return None;
         }
+        if !self.toolbox_open {
+            return ((0..18).contains(&mouse_x) && (0..16).contains(&mouse_y))
+                .then_some(ToolboxTarget::ClosedTab);
+        }
+        if !(0..TOOLBOX_W).contains(&mouse_x) || !(0..200).contains(&mouse_y) {
+            return None;
+        }
+        if mouse_y < 18 {
+            return Some(ToolboxTarget::Menu);
+        }
+        if mouse_y < 30 {
+            return Some(ToolboxTarget::ScrollUp);
+        }
+        if mouse_y >= 186 {
+            return Some(ToolboxTarget::ScrollDown);
+        }
         let slot_h = self.tray_slot_height();
-        let slot = ((mouse_y - 30) / slot_h) as usize;
+        let slot = ((mouse_y - 30) / slot_h.max(1)) as usize;
         let vis = self.visible_tray_slots();
         if slot < vis && self.tray_scroll + slot < self.tray_order.len() {
-            Some(slot)
+            Some(ToolboxTarget::TraySlot(slot))
         } else {
             None
+        }
+    }
+
+    pub fn hovered_tray_slot(&self, mouse_x: i32, mouse_y: i32) -> Option<usize> {
+        match self.toolbox_target_at(mouse_x, mouse_y) {
+            Some(ToolboxTarget::TraySlot(slot)) => Some(slot),
+            _ => None,
         }
     }
 
@@ -1815,7 +1869,8 @@ impl PuzzleSession {
         } else {
             let (px, py) = self.active_pointer(mouse_x, mouse_y);
             PointerVisualState::Board {
-                hovered_slot: self.hovered_tray_slot(px, py),
+                hovered_toolbox: self.toolbox_target_at(px, py),
+                pressed_toolbox: self.pressed_toolbox_target,
                 held_piece_pos: self.held_piece.map(|p| (p, px, py)),
             }
         };

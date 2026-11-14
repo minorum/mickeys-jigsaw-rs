@@ -2361,3 +2361,344 @@ fn mickey_cursor_uses_correct_sprites_hotspots_and_viewport_bounds() {
     assert!(!renderer.render_if_needed(&app, 320, 80, false, false));
     assert_ne!(&renderer.rgba_buf[off_64..off_64 + 4], &[0, 0, 255, 255]);
 }
+
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
+#[test]
+fn toolbox_open_closed_hover_pressed_and_cursor_states() {
+    let mut app = test_browser();
+    let asset = app.preview_asset.clone();
+    let mut session = PuzzleSession::new(1, asset, 3, true, false, false);
+    session.toolbox_open = true;
+    app.session = Some(session);
+    app.set_screen(AppScreen::Playing);
+
+    let mut renderer = AppRenderer::new();
+
+    // Open toolbox: x=0..2 stays black, tbx[49] icon renders inside Menu button at (3, 2).
+    renderer.render_if_needed(&app, 200, 100, false, false);
+    let black_idx = renderer.fb.color_index([0, 0, 0]);
+    assert_eq!(renderer.fb.get_pixel(1, 100), black_idx);
+    assert_eq!(
+        AppRenderer::desired_cursor(&app, 200, 100, false),
+        Some((64, 193, 100)),
+        "playfield idle uses cursor 64"
+    );
+    let menu_baseline = renderer.fb.pixels;
+
+    let icon_49 = &app.tbx.sprites[49];
+    let mut checked_icon_px = false;
+    for dy in 0..icon_49.sub_h as i32 {
+        for dx in 0..icon_49.width as i32 {
+            let sy = icon_49.sub_y as usize + dy as usize;
+            let off = sy * icon_49.stride as usize + icon_49.sub_x as usize + dx as usize;
+            if icon_49.is_opaque(off) {
+                let expected = renderer
+                    .fb
+                    .color_index(app.tbx.palette[icon_49.pixels[off] as usize]);
+                assert_eq!(renderer.fb.get_pixel(3 + dx, 2 + dy), expected);
+                checked_icon_px = true;
+                break;
+            }
+        }
+        if checked_icon_px {
+            break;
+        }
+    }
+    assert!(checked_icon_px, "tbx[49] should have opaque pixels");
+
+    // Hovering Menu, ScrollUp (inactive at 0), ScrollDown, and TraySlot(0).
+    renderer.render_if_needed(&app, 20, 8, false, false);
+    assert_ne!(renderer.fb.pixels, menu_baseline, "Menu hover must repaint");
+    assert_eq!(
+        AppRenderer::desired_cursor(&app, 20, 8, false),
+        Some((62, 14, 8))
+    );
+
+    renderer.render_if_needed(&app, 20, 192, false, false);
+    assert_ne!(
+        renderer.fb.pixels, menu_baseline,
+        "ScrollDown hover must repaint"
+    );
+    let hover_scroll_down = renderer.fb.pixels;
+
+    // Pressing ScrollDown switches visual to pressed state and cursor to 63, then scrolls on release.
+    {
+        let sess = app.session.as_mut().unwrap();
+        assert_eq!(
+            sess.toolbox_target_at(20, 192),
+            Some(crate::puzzle::ToolboxTarget::ScrollDown)
+        );
+        sess.handle_pointer_press(20, 192, &mut app.audio);
+        assert_eq!(
+            sess.pressed_toolbox_target,
+            Some(crate::puzzle::ToolboxTarget::ScrollDown)
+        );
+    }
+    renderer.render_if_needed(&app, 20, 192, false, false);
+    assert_ne!(
+        renderer.fb.pixels, hover_scroll_down,
+        "ScrollDown press must repaint"
+    );
+    assert_eq!(
+        AppRenderer::desired_cursor(&app, 20, 192, false),
+        Some((63, 10, 192))
+    );
+
+    {
+        let sess = app.session.as_mut().unwrap();
+        sess.handle_pointer_release(20, 192, &mut app.audio);
+        assert!(sess.pressed_toolbox_target.is_none());
+        assert_eq!(sess.tray_scroll, 1);
+    }
+
+    // Collapsed toolbox: tab at (2, 2) renders tbx[49], responds to hover/press/release.
+    app.session.as_mut().unwrap().toggle_toolbox();
+    assert!(!app.session.as_ref().unwrap().toolbox_open);
+    renderer.render_if_needed(&app, 200, 100, false, false);
+    let closed_idle = renderer.fb.pixels;
+    assert_eq!(
+        app.session.as_ref().unwrap().toolbox_target_at(8, 8),
+        Some(crate::puzzle::ToolboxTarget::ClosedTab)
+    );
+    assert_eq!(app.session.as_ref().unwrap().toolbox_target_at(20, 8), None);
+    assert_eq!(
+        AppRenderer::desired_cursor(&app, 8, 8, false),
+        Some((62, 2, 8))
+    );
+
+    renderer.render_if_needed(&app, 8, 8, false, false);
+    assert_ne!(
+        renderer.fb.pixels, closed_idle,
+        "ClosedTab hover must repaint"
+    );
+
+    app.session
+        .as_mut()
+        .unwrap()
+        .handle_pointer_press(8, 8, &mut app.audio);
+    assert_eq!(
+        AppRenderer::desired_cursor(&app, 8, 8, false),
+        Some((63, -2, 8))
+    );
+    renderer.render_if_needed(&app, 8, 8, false, false);
+    app.session
+        .as_mut()
+        .unwrap()
+        .handle_pointer_release(8, 8, &mut app.audio);
+    assert!(app.session.as_ref().unwrap().toolbox_open);
+
+    // ClosedTab horizontal edges (x = 0, 16, 17 open; x = 18 does not) and while holding a piece.
+    for edge_x in [0, 16, 17] {
+        let sess = app.session.as_mut().unwrap();
+        sess.toolbox_open = false;
+        assert_eq!(
+            sess.toolbox_target_at(edge_x, 8),
+            Some(crate::puzzle::ToolboxTarget::ClosedTab)
+        );
+        sess.handle_pointer_press(edge_x, 8, &mut app.audio);
+        sess.handle_pointer_release(edge_x, 8, &mut app.audio);
+        assert!(
+            sess.toolbox_open,
+            "ClosedTab edge x={edge_x} must open toolbox"
+        );
+    }
+    {
+        let sess = app.session.as_mut().unwrap();
+        sess.toolbox_open = false;
+        assert_eq!(sess.toolbox_target_at(18, 8), None);
+        sess.handle_pointer_press(18, 8, &mut app.audio);
+        sess.handle_pointer_release(18, 8, &mut app.audio);
+        assert!(!sess.toolbox_open, "x=18 is outside ClosedTab");
+
+        // Holding a piece while clicking rightmost tbx[49] column (x=17) still opens toolbox.
+        sess.held_piece = Some(0);
+        sess.handle_pointer_press(17, 8, &mut app.audio);
+        sess.handle_pointer_release(17, 8, &mut app.audio);
+        assert!(sess.toolbox_open);
+        assert_eq!(sess.held_piece, Some(0));
+    }
+}
+
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
+#[test]
+fn toolbox_tray_slots_scrolling_removal_and_return() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut audio = AudioEngine::new(dir, false, false);
+    let asset = PuzzleAsset::load(dir, 1, false).unwrap();
+    let mut session = PuzzleSession::new(1, asset, 3, true, false, false);
+    let vis = session.visible_tray_slots();
+    let slot_h = session.tray_slot_height();
+    assert_eq!(vis, 3);
+
+    // Every visible slot (first through last) is hit-tested accurately; non-slot regions return None.
+    assert_eq!(
+        session.toolbox_target_at(20, 8),
+        Some(crate::puzzle::ToolboxTarget::Menu)
+    );
+    assert_eq!(
+        session.toolbox_target_at(20, 22),
+        Some(crate::puzzle::ToolboxTarget::ScrollUp)
+    );
+    assert_eq!(
+        session.toolbox_target_at(20, 192),
+        Some(crate::puzzle::ToolboxTarget::ScrollDown)
+    );
+    assert_eq!(session.hovered_tray_slot(20, 8), None);
+    assert_eq!(session.hovered_tray_slot(20, 22), None);
+    assert_eq!(session.hovered_tray_slot(20, 192), None);
+    assert_eq!(session.hovered_tray_slot(48, 50), None);
+    for slot in 0..vis {
+        let y = 30 + slot as i32 * slot_h + 2;
+        assert_eq!(session.hovered_tray_slot(20, y), Some(slot));
+    }
+
+    // Scroll boundaries, non-interrupting UI click audio, & tray removal + return.
+    audio.play_common(crate::audio::CommonSound::ChoosePiece);
+    let caption_before = audio.caption_key();
+    assert!(!session.scroll_tray(-1));
+    assert!(session.scroll_tray(1));
+    assert_eq!(session.tray_scroll, 1);
+    session.handle_click(20, 192, &mut audio);
+    assert_eq!(session.tray_scroll, 2);
+    assert_eq!(
+        audio.caption_key(),
+        caption_before,
+        "tray scroll UI click must not clear active speech caption"
+    );
+    session.handle_click(20, 22, &mut audio);
+    assert_eq!(session.tray_scroll, 1);
+
+    let expected_first_after_scroll = session.tray_order[1];
+    session.handle_click(20, 32, &mut audio);
+    assert_eq!(session.held_piece, Some(expected_first_after_scroll));
+    assert_eq!(session.tray_order.len(), 8);
+
+    // Returning piece to slot 0 restores it at tray_scroll.
+    session.handle_click(20, 32, &mut audio);
+    assert!(session.held_piece.is_none());
+    assert_eq!(session.tray_order.len(), 9);
+    assert_eq!(session.tray_order[1], expected_first_after_scroll);
+
+    // Picking pieces from the last page until tray_scroll >= tray_order.len() clamps scroll so tray is not empty.
+    session.tray_scroll = session.tray_order.len() - vis;
+    for _ in 0..vis {
+        let y = 30 + (vis as i32 - 1) * slot_h + 2;
+        session.handle_click(20, y, &mut audio);
+        if let Some(p) = session.held_piece.take() {
+            session.pieces[p].placed = true;
+        }
+    }
+    assert!(session.tray_scroll < session.tray_order.len());
+}
+
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
+#[test]
+fn connected_group_pickup_render_movement_and_tray_return() {
+    let mut app = test_browser();
+    let asset = app.preview_asset.clone();
+    let mut session = PuzzleSession::new(1, asset, 2, true, false, false);
+    let col_w = crate::puzzle::grid_col_widths(2);
+    let row_h = crate::puzzle::grid_row_heights(2);
+    let p0 = 0usize;
+    let p1 = 1usize;
+    for (pidx, r, c) in [(p0, 0usize, 0usize), (p1, 0, 1)] {
+        let pos = session.tray_order.iter().position(|&p| p == pidx).unwrap();
+        session.tray_scroll = pos;
+        session.handle_click(20, 40, &mut app.audio);
+        let cx = session.playfield_x() + col_w[..c].iter().sum::<i32>() + col_w[c] / 2;
+        let cy = session.playfield_y() + row_h[..r].iter().sum::<i32>() + row_h[r] / 2;
+        session.handle_click(cx, cy, &mut app.audio);
+    }
+
+    let c0x = session.playfield_x() + col_w[0] / 2;
+    let c0y = session.playfield_y() + row_h[0] / 2;
+    assert!(session.handle_right_click(c0x, c0y, &mut app.audio));
+    assert_eq!(session.held_piece, Some(p0));
+    assert_eq!(session.held_group.len(), 2);
+
+    app.session = Some(session);
+    app.set_screen(AppScreen::Playing);
+    let mut renderer = AppRenderer::new();
+
+    renderer.render_if_needed(&app, 150, 90, false, false);
+    let frame_pos1 = renderer.fb.pixels;
+    renderer.render_if_needed(&app, 200, 110, false, false);
+    assert_ne!(
+        renderer.fb.pixels, frame_pos1,
+        "moving held connected group must update rendered playfield"
+    );
+
+    // Return the entire connected group to the tray.
+    let sess = app.session.as_mut().unwrap();
+    sess.handle_click(20, 40, &mut app.audio);
+    assert!(sess.held_piece.is_none());
+    assert!(sess.held_group.is_empty());
+    assert!(sess.tray_order.contains(&p0));
+    assert!(sess.tray_order.contains(&p1));
+}
+
+#[cfg_attr(
+    not(feature = "asset-tests"),
+    ignore = "requires original DOS game assets"
+)]
+#[test]
+fn vga_ega_switch_during_unfinished_puzzle_remaps_toolbox_and_border() {
+    let mut app = test_browser();
+    app.setup_menu.prefs.video_mode = 1; // VGA
+    app.sync_prefs_from_setup();
+    let mut session = PuzzleSession::new(1, app.preview_asset.clone(), 2, true, false, false);
+    let pos = session.tray_order.iter().position(|&p| p == 0).unwrap();
+    session.tray_scroll = pos;
+    session.handle_click(20, 40, &mut app.audio);
+    let piece0 = &session.pieces[0];
+    let cx = session.playfield_x() + piece0.base_x + piece0.base_w / 2;
+    let cy = session.playfield_y() + piece0.base_y + piece0.base_h / 2;
+    session.handle_click(cx, cy, &mut app.audio);
+    app.session = Some(session);
+    app.set_screen(AppScreen::Playing);
+
+    let mut renderer = AppRenderer::new();
+    renderer.render_if_needed(&app, 200, 100, false, false);
+    let vga_pixels = renderer.fb.pixels;
+    let vga_asset_rev = app.session.as_ref().unwrap().asset_rev();
+
+    // Switch to EGA while puzzle is unfinished.
+    app.setup_menu.prefs.video_mode = 2;
+    app.sync_prefs_from_setup();
+    assert!(app.error.is_none());
+    let sess = app.session.as_ref().unwrap();
+    assert_ne!(sess.asset_rev(), vga_asset_rev);
+    assert!(sess.pieces[0].placed);
+
+    renderer.render_if_needed(&app, 200, 100, false, false);
+    assert_ne!(
+        renderer.fb.pixels, vga_pixels,
+        "EGA switch must invalidate toolbox & board caches"
+    );
+
+    // Verify tbx_ega[49] in open Menu is remapped to the EGA puzzle palette.
+    let icon_49 = &app.tbx_ega.sprites[49];
+    for dy in 0..icon_49.sub_h as i32 {
+        for dx in 0..icon_49.width as i32 {
+            let sy = icon_49.sub_y as usize + dy as usize;
+            let off = sy * icon_49.stride as usize + icon_49.sub_x as usize + dx as usize;
+            if icon_49.is_opaque(off) {
+                let expected = renderer
+                    .fb
+                    .color_index(app.tbx_ega.palette[icon_49.pixels[off] as usize]);
+                assert_eq!(renderer.fb.get_pixel(3 + dx, 2 + dy), expected);
+                return;
+            }
+        }
+    }
+    panic!("tbx[49] had no opaque pixel");
+}
