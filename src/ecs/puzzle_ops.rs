@@ -678,25 +678,22 @@ pub fn can_place_piece_at<'a>(
 }
 
 /// Computes screen-space pixel offsets `(piece_index, dx, dy)` for all held pieces relative to the anchor piece.
-pub fn held_group_offsets_at<'a>(
+pub fn held_group_anchor_cell<'a>(
     meta: &PuzzleMeta,
     pointer_x: i32,
     pointer_y: i32,
     held_pieces: impl Iterator<Item = (usize, bool, (i32, i32))> + Clone,
-) -> Vec<(usize, i32, i32)> {
+) -> Option<(usize, usize)> {
     let mut count = 0usize;
-    let mut anchor_idx = None;
-    for (idx, is_anchor, _) in held_pieces.clone() {
+    let mut has_anchor = false;
+    for (_, is_anchor, _) in held_pieces.clone() {
         count += 1;
         if is_anchor {
-            anchor_idx = Some(idx);
+            has_anchor = true;
         }
     }
-    let Some(anchor_idx) = anchor_idx else {
-        return Vec::new();
-    };
-    if count <= 1 || meta.grid_dim <= 1 {
-        return vec![(anchor_idx, 0, 0)];
+    if !has_anchor || count <= 1 || meta.grid_dim <= 1 {
+        return None;
     }
     let dim_i32 = meta.grid_dim as i32;
     let dest_anchor = meta
@@ -710,7 +707,27 @@ pub fn held_group_offsets_at<'a>(
                     && (0..dim_i32).contains(&(dc_cell as i32 + dc))
             })
         });
-    let Some((anchor_r, anchor_c)) = dest_anchor.or(meta.held_group_origin_cell) else {
+    dest_anchor.or(meta.held_group_origin_cell)
+}
+
+pub fn held_group_offsets_at<'a>(
+    meta: &PuzzleMeta,
+    pointer_x: i32,
+    pointer_y: i32,
+    held_pieces: impl Iterator<Item = (usize, bool, (i32, i32))> + Clone,
+) -> Vec<(usize, i32, i32)> {
+    let mut anchor_idx = None;
+    for (idx, is_anchor, _) in held_pieces.clone() {
+        if is_anchor {
+            anchor_idx = Some(idx);
+        }
+    }
+    let Some(anchor_idx) = anchor_idx else {
+        return Vec::new();
+    };
+    let Some((anchor_r, anchor_c)) =
+        held_group_anchor_cell(meta, pointer_x, pointer_y, held_pieces.clone())
+    else {
         return vec![(anchor_idx, 0, 0)];
     };
     let dim = meta.grid_dim;

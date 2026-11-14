@@ -58,13 +58,14 @@ pub fn puzzle_timers_and_animation_system(
     }
 
     let mut audio_cmds = Vec::new();
+    let mut queued_playing = audio_status.is_playing;
     for (anim_entity, mut anim) in anim_q.iter_mut() {
         anim.tick_accum += dt;
         loop {
             if anim.tick_accum < anim.frame_delay_secs {
                 break;
             }
-            if anim.wait_for_audio && audio_status.is_playing {
+            if anim.wait_for_audio && queued_playing {
                 anim.tick_accum = anim.frame_delay_secs;
                 break;
             }
@@ -77,9 +78,11 @@ pub fn puzzle_timers_and_animation_system(
                 if anim.repetitions_left <= 1 {
                     if anim.looping_sound.is_some() {
                         audio_cmds.push(AudioCommand::StopAll);
+                        queued_playing = false;
                     }
                     if std::mem::take(&mut meta.pending_completion_feedback) {
                         audio_cmds.push(AudioCommand::PlayCommon(CommonSound::DoneWithThisOne));
+                        queued_playing = true;
                     }
                     commands.entity(anim_entity).despawn();
                     anim_finished.0 = true;
@@ -92,7 +95,7 @@ pub fn puzzle_timers_and_animation_system(
             }
 
             let mut started_loop_audio = false;
-            if !audio_status.is_playing
+            if !queued_playing
                 && let Some((sound, descriptor)) = anim.looping_sound
             {
                 let desc = &meta.asset.sounds[sound].sounds[descriptor];
@@ -102,18 +105,25 @@ pub fn puzzle_timers_and_animation_system(
                         stem: desc.stem.clone(),
                         song_idx: desc.phrase_idx as usize,
                     });
+                    if audio_status.music_enabled {
+                        queued_playing = true;
+                    }
                 } else {
                     audio_cmds.push(AudioCommand::PlayNnv {
                         stem: desc.stem.clone(),
                         phrase_idx: desc.phrase_idx as usize,
                     });
+                    if audio_status.sfx_enabled {
+                        queued_playing = true;
+                    }
                 }
             }
             let frame = anim.cur_frame;
             let mut local_status = audio_status.clone();
-            if started_loop_audio {
+            if queued_playing || started_loop_audio {
                 local_status.is_playing = true;
             }
+            let cmd_start = audio_cmds.len();
             apply_frame_side_effects(
                 &mut meta.asset,
                 &mut meta.voice_rng,
@@ -123,6 +133,19 @@ pub fn puzzle_timers_and_animation_system(
                 frame,
                 &mut audio_cmds,
             );
+            for cmd in &audio_cmds[cmd_start..] {
+                match cmd {
+                    AudioCommand::StopAll => queued_playing = false,
+                    AudioCommand::PlayCommon(_) => queued_playing = true,
+                    AudioCommand::PlayNnv { .. } if audio_status.sfx_enabled => {
+                        queued_playing = true;
+                    }
+                    AudioCommand::PlayIss { .. } if audio_status.music_enabled => {
+                        queued_playing = true;
+                    }
+                    _ => {}
+                }
+            }
         }
     }
     flush_audio_commands(audio_cmds, &mut audio_out);

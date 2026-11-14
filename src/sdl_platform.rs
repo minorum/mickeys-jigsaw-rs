@@ -78,6 +78,7 @@ struct HintTexKey {
     session_id: u64,
     asset_rev: u64,
     hint_idx: usize,
+    playfield_x: i32,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -356,10 +357,16 @@ impl<'a> SdlGameRenderer<'a> {
             .next()
             .map(|(id, h)| (id.index, h.timer.remaining_secs()));
         if let Some((hidx, rem)) = hint_info {
+            let playfield_x = world
+                .resource::<ActivePuzzle>()
+                .0
+                .as_ref()
+                .map_or(0, |m| m.playfield_x());
             let hint_key = HintTexKey {
                 session_id,
                 asset_rev,
                 hint_idx: hidx,
+                playfield_x,
             };
             let rebuild = self.hint_layer.as_ref().is_none_or(|(k, _)| *k != hint_key);
             if rebuild {
@@ -462,13 +469,18 @@ impl<'a> SdlGameRenderer<'a> {
 
         // 4. Held piece / connected group (uploaded once per pickup/cell; zero CPU work while dragging)
         let mut held_anchor: Option<(usize, i32, i32)> = None;
-        let mut held_count = 0usize;
+        let mut held_items: Vec<(usize, bool, (i32, i32))> = Vec::new();
         for (ident, geom, loc) in world
             .query::<(&PieceIdentity, &PieceGeometry, &PieceLocation)>()
             .iter(world)
         {
-            if let PieceLocation::Held { is_anchor, .. } = *loc {
-                held_count += 1;
+            if let PieceLocation::Held {
+                is_anchor,
+                group_offset,
+                ..
+            } = *loc
+            {
+                held_items.push((ident.index, is_anchor, group_offset));
                 if is_anchor {
                     held_anchor = Some((ident.index, geom.base_w, geom.base_h));
                 }
@@ -477,14 +489,12 @@ impl<'a> SdlGameRenderer<'a> {
         if let Some((pidx, anchor_w, anchor_h)) = held_anchor {
             let anchor_cell = {
                 let meta = world.resource::<ActivePuzzle>().0.as_ref().unwrap();
-                if held_count > 1 && meta.grid_dim > 1 {
-                    let pfx = anchor_w / 2;
-                    let pfy = anchor_h / 2;
-                    meta.grid_cell_at(px - pfx, py - pfy)
-                        .or(meta.held_group_origin_cell)
-                } else {
-                    None
-                }
+                crate::ecs::puzzle_ops::held_group_anchor_cell(
+                    meta,
+                    px,
+                    py,
+                    held_items.iter().copied(),
+                )
             };
             let held_key = HeldTexKey {
                 session_id,
