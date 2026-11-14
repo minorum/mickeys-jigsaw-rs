@@ -87,11 +87,15 @@ pub struct AppInput {
     pub key_s: bool,
     pub key_g: bool,
     pub key_p: bool,
+    pub key_t: bool,
+    pub key_m: bool,
     pub f1: bool,
     pub f2: bool,
     pub f3: bool,
     pub f4: bool,
     pub f5: bool,
+    pub f7: bool,
+    pub f8: bool,
     pub move_x: i32,
     pub move_y: i32,
 }
@@ -154,6 +158,7 @@ pub struct GameApp {
     // Active puzzle state
     pub session: Option<PuzzleSession>,
     pub session_use_ega: bool,
+    pub confirm_exit_puzzle: bool,
     pub error: Option<String>,
 
     app_rev: u64,
@@ -213,6 +218,7 @@ impl GameApp {
             curved_edges: true,
             session: None,
             session_use_ega: use_ega,
+            confirm_exit_puzzle: false,
             error: None,
             app_rev: 1,
         })
@@ -256,6 +262,7 @@ impl GameApp {
             curved_edges: true,
             session: None,
             session_use_ega: use_ega,
+            confirm_exit_puzzle: false,
             error: None,
             app_rev: 1,
         }
@@ -291,13 +298,35 @@ impl GameApp {
         }
     }
 
-    fn return_to_browser(&mut self) {
+    fn do_return_to_browser(&mut self) {
         if let Some(session) = &mut self.session {
             session.cancel_pointer_drag();
         }
+        self.confirm_exit_puzzle = false;
         self.audio.stop_all();
         self.audio.play_common(CommonSound::OtherPicture);
         self.set_screen(AppScreen::Browser);
+    }
+
+    fn return_to_browser(&mut self) {
+        let unfinished = self
+            .session
+            .as_ref()
+            .is_some_and(|s| !s.solved && s.has_any_placed_piece());
+        if unfinished && !self.confirm_exit_puzzle {
+            self.confirm_exit_puzzle = true;
+            self.audio.play_common(CommonSound::NotDoneYet);
+            if let Some(sess) = &mut self.session {
+                sess.cancel_pointer_drag();
+                sess.status_message = Some((
+                    "We're not done yet. Exit? (Enter/Click=Yes, Esc=No)".to_string(),
+                    8.0,
+                ));
+            }
+            self.bump_rev();
+            return;
+        }
+        self.do_return_to_browser();
     }
 
     pub fn reload_preview(&mut self) {
@@ -428,7 +457,11 @@ impl GameApp {
         } else {
             8
         };
-        self.audio.play_common(CommonSound::ChooseSize);
+        self.audio.play_common(if self.can_resume_selected() {
+            CommonSound::ChangePieceSize
+        } else {
+            CommonSound::ChooseSize
+        });
         self.bump_rev();
     }
 
@@ -440,6 +473,7 @@ impl GameApp {
 
     pub fn exit_setup(&mut self, return_to_playing: bool) {
         self.sync_prefs_from_setup();
+        self.audio.play_common(CommonSound::SetupStart);
         let next = if return_to_playing && self.session.is_some() {
             AppScreen::Playing
         } else {
@@ -561,6 +595,20 @@ impl GameApp {
                 }
             }
             AppScreen::Playing => {
+                if self.confirm_exit_puzzle {
+                    if input.enter || input.left_pressed {
+                        self.confirm_exit_puzzle = false;
+                        self.do_return_to_browser();
+                    } else if input.escape {
+                        self.confirm_exit_puzzle = false;
+                        self.audio.play_common(CommonSound::Cancel);
+                        if let Some(sess) = &mut self.session {
+                            sess.status_message = None;
+                        }
+                        self.bump_rev();
+                    }
+                    return;
+                }
                 if input.escape {
                     self.return_to_browser();
                     return;
@@ -591,11 +639,20 @@ impl GameApp {
                         }
                     }
 
-                    if (input.right_pressed || input.space) && !sess.solved {
+                    if input.right_pressed && !sess.solved {
+                        if !sess.handle_right_click(
+                            input.pointer_x,
+                            input.pointer_y,
+                            &mut self.audio,
+                        ) {
+                            sess.toggle_toolbox();
+                        }
+                    } else if input.space && !sess.solved {
                         sess.toggle_toolbox();
                     }
                     if input.f1 {
                         sess.trigger_hint();
+                        self.audio.play_common(CommonSound::SeeWhatHappens);
                     }
                     if input.f2 {
                         sess.auto_solve(&mut self.audio);
@@ -606,6 +663,72 @@ impl GameApp {
                     }
                     if input.f5 || input.key_p {
                         sess.export_printable_picture(&self.game_dir);
+                    }
+                    if input.f7 {
+                        self.prefs.music_on = u16::from(self.prefs.music_on == 0);
+                        self.audio
+                            .set_enabled(self.prefs.music_on != 0, self.prefs.sfx_on != 0);
+                        self.audio.play_common(CommonSound::UiClick);
+                        sess.status_message = Some((
+                            if self.prefs.music_on != 0 {
+                                "Music: ON".to_string()
+                            } else {
+                                "Music: OFF".to_string()
+                            },
+                            2.0,
+                        ));
+                        self.app_rev = self.app_rev.wrapping_add(1);
+                    }
+                    if input.f8 {
+                        self.prefs.sfx_on = u16::from(self.prefs.sfx_on == 0);
+                        self.audio
+                            .set_enabled(self.prefs.music_on != 0, self.prefs.sfx_on != 0);
+                        self.audio.play_common(CommonSound::UiClick);
+                        sess.status_message = Some((
+                            if self.prefs.sfx_on != 0 {
+                                "Sound Effects: ON".to_string()
+                            } else {
+                                "Sound Effects: OFF".to_string()
+                            },
+                            2.0,
+                        ));
+                        self.app_rev = self.app_rev.wrapping_add(1);
+                    }
+                    if input.key_t {
+                        self.prefs.timer_on = u16::from(self.prefs.timer_on == 0);
+                        sess.set_preferences(
+                            self.prefs.grid_lines_on != 0,
+                            self.prefs.timer_on != 0,
+                            self.prefs.text_msg_on != 0,
+                        );
+                        self.audio.play_common(CommonSound::UiClick);
+                        sess.status_message = Some((
+                            if self.prefs.timer_on != 0 {
+                                "Timer: ON".to_string()
+                            } else {
+                                "Timer: OFF".to_string()
+                            },
+                            2.0,
+                        ));
+                        self.app_rev = self.app_rev.wrapping_add(1);
+                    }
+                    if input.key_m {
+                        self.prefs.text_msg_on = u16::from(self.prefs.text_msg_on == 0);
+                        sess.set_preferences(
+                            self.prefs.grid_lines_on != 0,
+                            self.prefs.timer_on != 0,
+                            self.prefs.text_msg_on != 0,
+                        );
+                        self.audio.play_common(CommonSound::UiClick);
+                        sess.status_message = Some((
+                            if self.prefs.text_msg_on != 0 {
+                                "Text Messages: ON".to_string()
+                            } else {
+                                "Text Messages: OFF".to_string()
+                            },
+                            2.0,
+                        ));
+                        self.app_rev = self.app_rev.wrapping_add(1);
                     }
                     if input.up || input.wheel_delta > 0 {
                         sess.scroll_tray(-1);

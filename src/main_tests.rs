@@ -1761,3 +1761,111 @@ fn setup_left_on_save_and_return_does_not_activate_save() {
     );
     assert!(app.setup_menu.error.is_none());
 }
+
+#[test]
+fn all_15_common_feedback_cues_play_and_set_expected_captions() {
+    let mut audio = AudioEngine::new(Path::new("."), false, false);
+    for sfx_only in [
+        CommonSound::Cancel,
+        CommonSound::SetupStart,
+        CommonSound::Quit,
+        CommonSound::UiClick,
+    ] {
+        audio.play_common(sfx_only);
+        assert!(audio.common_caption().is_none());
+    }
+    for (speech, expected_substr) in [
+        (CommonSound::NextPicture, "next picture"),
+        (CommonSound::PreviousPicture, "last picture"),
+        (CommonSound::StartPuzzle, "make this one"),
+        (CommonSound::ChooseSize, "how many pieces"),
+        (CommonSound::ChoosePiece, "choose a piece"),
+        (CommonSound::ReturnPiece, "put this one back"),
+        (CommonSound::OtherPicture, "different"),
+        (CommonSound::ChangePieceSize, "different piece size"),
+        (CommonSound::SeeWhatHappens, "see what happens"),
+        (CommonSound::DoneWithThisOne, "done with this one"),
+        (CommonSound::NotDoneYet, "not done yet"),
+    ] {
+        audio.play_common(speech);
+        let caption = audio.common_caption().expect("speech caption");
+        assert!(
+            caption.contains(expected_substr),
+            "unexpected caption {caption:?} for {speech:?}"
+        );
+    }
+}
+
+#[test]
+fn unfinished_puzzle_exit_prompts_confirmation_and_handles_cancel_or_confirm() {
+    let mut app = synthetic_app();
+    let mut session = PuzzleSession::new(1, app.preview_asset.clone(), 2, true, false, false);
+    session.pieces[0].placed = true;
+    app.session = Some(session);
+    app.set_screen(AppScreen::Playing);
+
+    // First Escape asks for confirmation instead of discarding progress.
+    app.handle_input(&AppInput {
+        escape: true,
+        ..Default::default()
+    });
+    assert_eq!(app.screen, AppScreen::Playing);
+    assert!(app.confirm_exit_puzzle);
+    assert!(
+        app.session
+            .as_ref()
+            .unwrap()
+            .status_message()
+            .is_some_and(|m| m.contains("We're not done yet"))
+    );
+
+    // Second Escape cancels the confirmation and resumes playing.
+    app.handle_input(&AppInput {
+        escape: true,
+        ..Default::default()
+    });
+    assert_eq!(app.screen, AppScreen::Playing);
+    assert!(!app.confirm_exit_puzzle);
+
+    // Escape then Enter confirms exiting to Browser.
+    app.handle_input(&AppInput {
+        escape: true,
+        ..Default::default()
+    });
+    assert!(app.confirm_exit_puzzle);
+    app.handle_input(&AppInput {
+        enter: true,
+        ..Default::default()
+    });
+    assert_eq!(app.screen, AppScreen::Browser);
+    assert!(!app.confirm_exit_puzzle);
+}
+
+#[test]
+fn in_game_hotkeys_toggle_music_sfx_timer_and_text_messages() {
+    let mut app = synthetic_app();
+    let session = PuzzleSession::new(1, app.preview_asset.clone(), 2, true, false, true);
+    app.session = Some(session);
+    app.set_screen(AppScreen::Playing);
+
+    let init_music = app.prefs.music_on;
+    let init_sfx = app.prefs.sfx_on;
+    let init_timer = app.prefs.timer_on;
+    let init_text = app.prefs.text_msg_on;
+
+    app.handle_input(&AppInput {
+        f7: true,
+        f8: true,
+        key_t: true,
+        key_m: true,
+        ..Default::default()
+    });
+
+    assert_ne!(app.prefs.music_on, init_music);
+    assert_ne!(app.prefs.sfx_on, init_sfx);
+    assert_ne!(app.prefs.timer_on, init_timer);
+    assert_ne!(app.prefs.text_msg_on, init_text);
+    let sess = app.session.as_ref().unwrap();
+    assert_eq!(sess.timer_enabled, app.prefs.timer_on != 0);
+    assert_eq!(sess.text_enabled, app.prefs.text_msg_on != 0);
+}

@@ -6,8 +6,7 @@ use crate::graphics::{
     render_scene_frame, render_scene_view_with_scratch,
 };
 use crate::puzzle::{
-    AnimationPlayer, JigsawPiece, PLAYFIELD_H, PLAYFIELD_W, PuzzleSession, TOOLBOX_W,
-    dissolve_progress,
+    AnimationPlayer, PLAYFIELD_H, PLAYFIELD_W, PuzzleSession, TOOLBOX_W, dissolve_progress,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -134,7 +133,7 @@ impl PuzzleRenderer {
         }
     }
 
-    fn ensure_placed_mask(&mut self, key: BoardStateKey, pieces: &[JigsawPiece]) {
+    fn ensure_placed_mask(&mut self, key: BoardStateKey, session: &PuzzleSession) {
         let rebuild = self
             .placed_mask
             .as_ref()
@@ -149,10 +148,11 @@ impl PuzzleRenderer {
                 })
                 .unwrap_or_else(|| vec![false; (PLAYFIELD_W * PLAYFIELD_H) as usize]);
 
-            for piece in pieces.iter().filter(|piece| piece.placed) {
+            for piece in session.pieces.iter().filter(|piece| piece.placed) {
                 let spr = &piece.sprite;
-                let ox = piece.target_x;
-                let oy = piece.target_y;
+                let (ox, oy) = session
+                    .piece_placed_origin(piece.index)
+                    .unwrap_or((piece.target_x, piece.target_y));
                 let w = spr.width as i32;
                 let h = spr.sub_h as i32;
                 let dy_start = (-oy).max(0);
@@ -270,13 +270,8 @@ impl PuzzleRenderer {
                 }
             } else {
                 for piece in &session.pieces {
-                    if piece.placed {
-                        board.blit_sprite(
-                            &piece.sprite,
-                            pfx + piece.target_x,
-                            pfy + piece.target_y,
-                            0,
-                        );
+                    if let Some((ox, oy)) = session.piece_placed_origin(piece.index) {
+                        board.blit_sprite(&piece.sprite, pfx + ox, pfy + oy, 0);
                     }
                 }
             }
@@ -340,7 +335,7 @@ impl PuzzleRenderer {
             let hy = pointer_y - piece.base_h / 2 + piece.target_y - piece.base_y - pfy;
             (piece, hx, hy)
         });
-        self.ensure_placed_mask(mask_key, &session.pieces);
+        self.ensure_placed_mask(mask_key, session);
         let placed_cov = &self.placed_mask.as_ref().unwrap().1;
 
         for y in 0..PLAYFIELD_H {
@@ -486,12 +481,17 @@ impl PuzzleRenderer {
             fb.draw_text_shadowed(font, status, pfx + 6, 186, colors.black, colors.yellow);
         }
 
-        // Draw currently held piece centered on the cursor
+        // Draw currently held piece (or connected group) centered on the cursor
         if let Some(pidx) = session.held_piece {
-            let piece = &session.pieces[pidx];
-            let px = pointer_x - piece.base_w / 2 + piece.target_x - piece.base_x;
-            let py = pointer_y - piece.base_h / 2 + piece.target_y - piece.base_y;
-            fb.blit_sprite(&piece.sprite, px, py, 0);
+            let anchor = &session.pieces[pidx];
+            let ax = pointer_x - anchor.base_w / 2;
+            let ay = pointer_y - anchor.base_h / 2;
+            for (gp_idx, cell_dx, cell_dy) in session.held_group_offsets() {
+                let piece = &session.pieces[gp_idx];
+                let px = ax + cell_dx + piece.target_x - piece.base_x;
+                let py = ay + cell_dy + piece.target_y - piece.base_y;
+                fb.blit_sprite(&piece.sprite, px, py, 0);
+            }
         }
     }
 
@@ -568,6 +568,16 @@ impl PuzzleRenderer {
             }
             fb.pixels
                 .copy_from_slice(&self.anim_fb.as_ref().unwrap().1.pixels);
+        }
+        if let Some(status) = session.status_message() {
+            fb.draw_text_shadowed(
+                font,
+                status,
+                session.playfield_x() + 6,
+                186,
+                self.ui_colors.black,
+                self.ui_colors.yellow,
+            );
         }
     }
 
