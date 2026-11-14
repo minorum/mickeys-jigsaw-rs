@@ -16,10 +16,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake \
+            pkg-config \
             libasound2-dev \
             libx11-dev \
             libxi-dev \
             libxext-dev \
+            libxcursor-dev \
+            libxrandr-dev \
+            libxfixes-dev \
+            libxss-dev \
+            libxtst-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
             libgl1-mesa-dev
 
       - uses: dtolnay/rust-toolchain@stable
