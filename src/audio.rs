@@ -691,6 +691,15 @@ impl AudioEngine {
         }
     }
 
+    /// Plays `CommonSound::UiClick` without interrupting active speech, captions, or music.
+    pub fn play_ui_click(&mut self) {
+        if self.sfx_enabled {
+            let (bank, phrase) = COMMON_FEEDBACK[CommonSound::UiClick as usize];
+            let samples = self.decoded_nnv_samples(bank, phrase);
+            self.play_effect(samples, NNV_SAMPLE_RATE);
+        }
+    }
+
     pub fn common_caption(&self) -> Option<&'static str> {
         self.common_caption.map(|(event, _, _)| event.caption())
     }

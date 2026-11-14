@@ -1380,14 +1380,14 @@ impl PuzzleSession {
             // Up scroll arrow (`y = 18..30`)
             if my < 30 {
                 if self.scroll_tray(-1) {
-                    audio.play_common(CommonSound::UiClick);
+                    audio.play_ui_click();
                 }
                 return None;
             }
             // Down scroll arrow (`y = 186..200`)
             if my >= 186 {
                 if self.scroll_tray(1) {
-                    audio.play_common(CommonSound::UiClick);
+                    audio.play_ui_click();
                 }
                 return None;
             }
@@ -1424,6 +1424,12 @@ impl PuzzleSession {
                 audio.play_common(CommonSound::ChoosePiece);
                 self.bump_tray();
             }
+            return None;
+        }
+
+        if self.toolbox_target_at(mx, my) == Some(ToolboxTarget::ClosedTab) {
+            self.toolbox_open = true;
+            self.bump_board();
             return None;
         }
 
@@ -1472,9 +1478,6 @@ impl PuzzleSession {
                     audio.play_error();
                 }
             }
-        } else if mx < 16 && my < 16 && !self.toolbox_open {
-            self.toolbox_open = true;
-            self.bump_board();
         } else if self.grid_dim > 1
             && let Some((r, c)) = self.grid_cell_at(mx - pfx, my - pfy)
             && let Some(placed_idx) = self

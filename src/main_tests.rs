@@ -2489,6 +2489,37 @@ fn toolbox_open_closed_hover_pressed_and_cursor_states() {
         .unwrap()
         .handle_pointer_release(8, 8, &mut app.audio);
     assert!(app.session.as_ref().unwrap().toolbox_open);
+
+    // ClosedTab horizontal edges (x = 0, 16, 17 open; x = 18 does not) and while holding a piece.
+    for edge_x in [0, 16, 17] {
+        let sess = app.session.as_mut().unwrap();
+        sess.toolbox_open = false;
+        assert_eq!(
+            sess.toolbox_target_at(edge_x, 8),
+            Some(crate::puzzle::ToolboxTarget::ClosedTab)
+        );
+        sess.handle_pointer_press(edge_x, 8, &mut app.audio);
+        sess.handle_pointer_release(edge_x, 8, &mut app.audio);
+        assert!(
+            sess.toolbox_open,
+            "ClosedTab edge x={edge_x} must open toolbox"
+        );
+    }
+    {
+        let sess = app.session.as_mut().unwrap();
+        sess.toolbox_open = false;
+        assert_eq!(sess.toolbox_target_at(18, 8), None);
+        sess.handle_pointer_press(18, 8, &mut app.audio);
+        sess.handle_pointer_release(18, 8, &mut app.audio);
+        assert!(!sess.toolbox_open, "x=18 is outside ClosedTab");
+
+        // Holding a piece while clicking rightmost tbx[49] column (x=17) still opens toolbox.
+        sess.held_piece = Some(0);
+        sess.handle_pointer_press(17, 8, &mut app.audio);
+        sess.handle_pointer_release(17, 8, &mut app.audio);
+        assert!(sess.toolbox_open);
+        assert_eq!(sess.held_piece, Some(0));
+    }
 }
 
 #[cfg_attr(
@@ -2527,9 +2558,20 @@ fn toolbox_tray_slots_scrolling_removal_and_return() {
         assert_eq!(session.hovered_tray_slot(20, y), Some(slot));
     }
 
-    // Scroll boundaries & tray removal + return.
+    // Scroll boundaries, non-interrupting UI click audio, & tray removal + return.
+    audio.play_common(crate::audio::CommonSound::ChoosePiece);
+    let caption_before = audio.caption_key();
     assert!(!session.scroll_tray(-1));
     assert!(session.scroll_tray(1));
+    assert_eq!(session.tray_scroll, 1);
+    session.handle_click(20, 192, &mut audio);
+    assert_eq!(session.tray_scroll, 2);
+    assert_eq!(
+        audio.caption_key(),
+        caption_before,
+        "tray scroll UI click must not clear active speech caption"
+    );
+    session.handle_click(20, 22, &mut audio);
     assert_eq!(session.tray_scroll, 1);
 
     let expected_first_after_scroll = session.tray_order[1];
