@@ -300,15 +300,6 @@ impl GameApp {
         self.set_screen(AppScreen::Browser);
     }
 
-    pub fn set_text_msg_on(&mut self, enabled: bool) {
-        let next = u16::from(enabled);
-        if self.prefs.text_msg_on != next {
-            self.prefs.text_msg_on = next;
-            self.sync_session_preferences();
-            self.bump_rev();
-        }
-    }
-
     pub fn reload_preview(&mut self) {
         let use_ega = self.prefs.video_mode >= 2;
         match PuzzleAsset::load(&self.game_dir, self.selected_puzzle, use_ega) {
@@ -458,15 +449,20 @@ impl GameApp {
     }
 
     pub fn handle_input(&mut self, input: &AppInput) {
+        let dt = if input.dt.is_finite() {
+            input.dt.max(0.0)
+        } else {
+            0.0
+        };
         if !matches!(self.screen, AppScreen::Setup { .. }) {
-            self.audio.update(input.dt);
+            self.audio.update(dt);
         }
-        self.process_input(input);
+        self.process_input(input, dt);
         self.audio
             .set_paused(matches!(self.screen, AppScreen::Setup { .. }));
     }
 
-    fn process_input(&mut self, input: &AppInput) {
+    fn process_input(&mut self, input: &AppInput, dt: f32) {
         // Global shortcut F4 opens Setup from anywhere
         if input.f4 && !matches!(self.screen, AppScreen::Setup { .. }) {
             if let Some(session) = &mut self.session {
@@ -477,11 +473,6 @@ impl GameApp {
             return;
         }
 
-        let dt = if input.dt.is_finite() {
-            input.dt.max(0.0)
-        } else {
-            0.0
-        };
         match self.screen {
             AppScreen::Title => {
                 self.screen_timer += dt;
@@ -577,7 +568,8 @@ impl GameApp {
                 let mut open_menu = false;
 
                 if let Some(ref mut sess) = self.session {
-                    sess.update(input.dt, &mut self.audio);
+                    let was_animating = sess.active_anim.is_some();
+                    sess.update(dt, &mut self.audio);
 
                     if input.right_pressed {
                         sess.clear_keyboard_pointer();
@@ -587,10 +579,11 @@ impl GameApp {
                             sess.move_keyboard_pointer(
                                 input.move_x as f32,
                                 input.move_y as f32,
-                                input.dt,
+                                dt,
                             );
                         }
                         if input.enter
+                            && !(was_animating && sess.active_anim.is_none())
                             && sess.handle_keyboard_activate(&mut self.audio)
                                 == Some(PuzzleAction::OpenMenu)
                         {

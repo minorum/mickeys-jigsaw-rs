@@ -48,7 +48,6 @@ struct BoardStateKey {
 struct ToolboxCacheKey {
     session_id: u64,
     asset_rev: u64,
-    board_rev: u64,
     tray_rev: u64,
     hovered_slot: Option<usize>,
 }
@@ -133,16 +132,6 @@ impl PuzzleRenderer {
             board_fb: None,
             toolbox_strip: None,
         }
-    }
-
-    /// Clears all cached derived palette, guide, board, and animation buffers.
-    pub fn reset_caches(&mut self) {
-        self.synced_asset = None;
-        self.dissolve_key = None;
-        self.anim_fb = None;
-        self.placed_mask = None;
-        self.board_fb = None;
-        self.toolbox_strip = None;
     }
 
     fn ensure_placed_mask(&mut self, key: BoardStateKey, pieces: &[JigsawPiece]) {
@@ -594,7 +583,6 @@ impl PuzzleRenderer {
         let key = ToolboxCacheKey {
             session_id: session.session_id(),
             asset_rev: session.asset_rev(),
-            board_rev: session.board_rev(),
             tray_rev: session.tray_rev(),
             hovered_slot,
         };
