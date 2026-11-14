@@ -1927,3 +1927,150 @@ fn replace_scene_asset_reopens_toolbox_when_solved_piece_count_changes() {
     assert!(!session.solved);
     assert!(session.toolbox_open);
 }
+
+#[test]
+fn cut_pieces_all_grids_cover_playfield_without_gaps_overlaps_or_trans_leaks() {
+    let mut asset = synthetic_puzzle_asset(1, false);
+    // Include `0xF8` (cut_pieces sentinel) and varied colors across the 270x196 playfield.
+    let mut cmds = vec![FrameCommand::Rect {
+        x: 2,
+        y: 2,
+        width: PLAYFIELD_W as i16,
+        height: PLAYFIELD_H as i16,
+        color: 0x00F8,
+        flags: 0,
+    }];
+    for band in 0..7u16 {
+        cmds.push(FrameCommand::Rect {
+            x: 10 + (band as i16) * 35,
+            y: 12 + (band as i16) * 20,
+            width: 28,
+            height: 24,
+            color: 0x0010 + band * 17,
+            flags: 0,
+        });
+    }
+    asset.records[1] = SceneRecord::Frame {
+        bg_color: 0,
+        bg_frame_idx: 0,
+        commands: cmds,
+    };
+
+    let (tbx, font) = synthetic_toolbox_and_font();
+    let mut renderer = PuzzleRenderer::new();
+    let mut fb = Framebuffer::new();
+
+    for puzzle_num in [1usize, 7, 15] {
+        for dim in 2..=8 {
+            for curved in [false, true] {
+                let mut session =
+                    PuzzleSession::new(puzzle_num, asset.clone(), dim, curved, false, false);
+                let mut coverage = vec![0u8; (PLAYFIELD_W * PLAYFIELD_H) as usize];
+
+                for piece in &session.pieces {
+                    let w = piece.sprite.width as i32;
+                    let h = piece.sprite.sub_h as i32;
+                    let opacity = piece
+                        .sprite
+                        .opacity
+                        .as_ref()
+                        .expect("cut piece opacity mask");
+                    assert_eq!(opacity.len(), (w * h) as usize);
+                    for y in 0..h {
+                        for x in 0..w {
+                            let i = (y * w + x) as usize;
+                            if opacity[i] {
+                                let px = piece.target_x + x;
+                                let py = piece.target_y + y;
+                                assert!(
+                                    (0..PLAYFIELD_W).contains(&px)
+                                        && (0..PLAYFIELD_H).contains(&py),
+                                    "out of bounds puzzle={puzzle_num} dim={dim} curved={curved} ({px}, {py})"
+                                );
+                                coverage[(py * PLAYFIELD_W + px) as usize] += 1;
+                                assert_eq!(
+                                    piece.sprite.pixels[i],
+                                    session.full_picture_fb.get_pixel(2 + px, 2 + py),
+                                    "pixel mismatch puzzle={puzzle_num} dim={dim} curved={curved} ({px}, {py})"
+                                );
+                            } else {
+                                assert_eq!(piece.sprite.pixels[i], 0xF8);
+                            }
+                        }
+                    }
+                }
+
+                assert!(
+                    coverage.iter().all(|&n| n == 1),
+                    "puzzle={puzzle_num} dim={dim} curved={curved}: missing={} overlapping={}",
+                    coverage.iter().filter(|&&n| n == 0).count(),
+                    coverage.iter().filter(|&&n| n > 1).count()
+                );
+
+                // Verify placing all pieces on the board reconstructs the exact 270x196 interior.
+                for idx in 0..session.pieces.len() {
+                    session.set_piece_placed_for_test(idx, true);
+                }
+                renderer.render(&session, &mut fb, &tbx, &font, 160, 100);
+                let pfx = session.playfield_x();
+                let pfy = session.playfield_y();
+                for y in 0..PLAYFIELD_H {
+                    for x in 0..PLAYFIELD_W {
+                        assert_eq!(
+                            fb.get_pixel(pfx + x, pfy + y),
+                            session.full_picture_fb.get_pixel(2 + x, 2 + y),
+                            "board mismatch puzzle={puzzle_num} dim={dim} curved={curved} ({x}, {y})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn toolbox_cache_and_guide_match_uncached_render_across_interactions() {
+    let asset = synthetic_puzzle_asset(1, false);
+    let mut session = PuzzleSession::new(1, asset.clone(), 4, true, true, false);
+    let (tbx, font) = synthetic_toolbox_and_font();
+
+    session.set_piece_placed_for_test(0, true);
+    session.set_piece_placed_for_test(5, true);
+    session.held_piece = Some(3);
+
+    let mut cached_renderer = PuzzleRenderer::new();
+    let mut fb_cached = Framebuffer::new();
+    let mut fb_uncached = Framebuffer::new();
+    let mut rgba_cached = vec![0u8; 320 * 200 * 4];
+    let mut rgba_uncached = vec![0u8; 320 * 200 * 4];
+
+    let steps = [
+        (20, 40, 0),
+        (20, 90, 0),
+        (160, 100, 0),
+        (20, 140, 2),
+        (120, 75, 2),
+        (55, 15, 2),
+    ];
+
+    for (mx, my, scroll) in steps {
+        session.tray_scroll = scroll;
+        cached_renderer.render(&session, &mut fb_cached, &tbx, &font, mx, my);
+        fb_cached.to_rgba8(&mut rgba_cached);
+        cached_renderer.blend_picture_guide(&session, &mut rgba_cached, mx, my);
+
+        let mut fresh = PuzzleRenderer::new();
+        fresh.render(&session, &mut fb_uncached, &tbx, &font, mx, my);
+        fb_uncached.to_rgba8(&mut rgba_uncached);
+        fresh.blend_picture_guide(&session, &mut rgba_uncached, mx, my);
+
+        assert_eq!(
+            fb_cached.pixels, fb_uncached.pixels,
+            "fb mismatch at ({mx}, {my}, {scroll})"
+        );
+        assert_eq!(
+            rgba_cached, rgba_uncached,
+            "rgba mismatch at ({mx}, {my}, {scroll})"
+        );
+    }
+}
