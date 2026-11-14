@@ -2816,6 +2816,34 @@ fn in_game_menu_opens_closes_and_navigates_keyboard_and_mouse() {
         ..Default::default()
     });
     assert!(!app.in_game_menu_open);
+
+    // Stationary pointer over disabled Replay (row 3) or OtherPicture (row 0)
+    // must not override keyboard Down + Enter selection of Setup (row 1).
+    app.open_in_game_menu();
+    let (r0x, r0y, _, _) = crate::app::in_game_menu_row_rect(0);
+    let (r3x, r3y, _, _) = crate::app::in_game_menu_row_rect(3);
+    app.handle_input(&AppInput {
+        pointer_x: r3x + 10,
+        pointer_y: r3y + 5,
+        pointer_moved: true,
+        ..Default::default()
+    });
+    assert_eq!(app.in_game_menu_selected, 0);
+    app.handle_input(&AppInput {
+        pointer_x: r0x + 10,
+        pointer_y: r0y + 5,
+        down: true,
+        ..Default::default()
+    });
+    assert_eq!(app.in_game_menu_selected, 1);
+    app.handle_input(&AppInput {
+        pointer_x: r0x + 10,
+        pointer_y: r0y + 5,
+        enter: true,
+        ..Default::default()
+    });
+    assert!(matches!(app.screen, AppScreen::Setup { .. }));
+    assert!(!app.in_game_menu_open);
 }
 
 #[test]

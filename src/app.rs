@@ -1025,6 +1025,15 @@ impl GameApp {
                         .map_or((input.pointer_x, input.pointer_y), |s| {
                             s.active_pointer(input.pointer_x, input.pointer_y)
                         });
+                    if (input.pointer_moved || input.move_x != 0 || input.move_y != 0)
+                        && let Some(cmd) = in_game_menu_command_at(px, py)
+                        && self.is_in_game_menu_command_enabled(cmd)
+                        && let Some(idx) = InGameMenuCommand::ALL.iter().position(|&c| c == cmd)
+                        && self.in_game_menu_selected != idx
+                    {
+                        self.in_game_menu_selected = idx;
+                        self.bump_rev();
+                    }
                     if input.escape {
                         self.close_in_game_menu(true);
                         return;
@@ -1048,8 +1057,7 @@ impl GameApp {
                         return;
                     }
                     if input.enter || input.space {
-                        let cmd = in_game_menu_command_at(px, py)
-                            .unwrap_or(InGameMenuCommand::ALL[self.in_game_menu_selected]);
+                        let cmd = InGameMenuCommand::ALL[self.in_game_menu_selected];
                         self.execute_in_game_menu_command(cmd);
                         return;
                     }
