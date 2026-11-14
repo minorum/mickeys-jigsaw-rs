@@ -2160,7 +2160,7 @@ fn puzzle_renderer_isolates_caches_across_replaced_sessions_without_assets() {
     session_a.render(&mut reused, &mut fb_a, &tbx, &font, 160, 100);
     let mut rgba_a = vec![0u8; 320 * 200 * 4];
     fb_a.to_rgba8(&mut rgba_a);
-    reused.blend_picture_guide(&mut session_a.world_mut(), &mut rgba_a, 160, 100);
+    reused.blend_picture_guide(session_a.world_mut(), &mut rgba_a, 160, 100);
 
     // Same puzzle_num and initial revision counters, different grid settings
     let mut fb_b_reused = Framebuffer::new();
@@ -2177,14 +2177,14 @@ fn puzzle_renderer_isolates_caches_across_replaced_sessions_without_assets() {
     session_c.render(&mut reused, &mut fb_c_reused, &tbx, &font, 160, 100);
     let mut rgba_c_reused = vec![0u8; 320 * 200 * 4];
     fb_c_reused.to_rgba8(&mut rgba_c_reused);
-    reused.blend_picture_guide(&mut session_c.world_mut(), &mut rgba_c_reused, 160, 100);
+    reused.blend_picture_guide(session_c.world_mut(), &mut rgba_c_reused, 160, 100);
 
     let mut fresh_c = PuzzleRenderer::new();
     let mut fb_c_fresh = Framebuffer::new();
     session_c.render(&mut fresh_c, &mut fb_c_fresh, &tbx, &font, 160, 100);
     let mut rgba_c_fresh = vec![0u8; 320 * 200 * 4];
     fb_c_fresh.to_rgba8(&mut rgba_c_fresh);
-    fresh_c.blend_picture_guide(&mut session_c.world_mut(), &mut rgba_c_fresh, 160, 100);
+    fresh_c.blend_picture_guide(session_c.world_mut(), &mut rgba_c_fresh, 160, 100);
 
     assert_eq!(fb_c_reused.pixels, fb_c_fresh.pixels);
     assert_eq!(fb_c_reused.palette, fb_c_fresh.palette);

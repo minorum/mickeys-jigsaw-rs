@@ -1731,7 +1731,7 @@ fn toolbox_graphics_match_actual_scene_depth_including_fallbacks() {
         let font = &app.world().resource::<StaticAssets>().font.clone();
         let mut expected = Framebuffer::new();
         let mut puzzle_renderer = PuzzleRenderer::new();
-        puzzle_renderer.render(app.world_mut(), &mut expected, &toolbox, &font, 160, 100);
+        puzzle_renderer.render(app.world_mut(), &mut expected, &toolbox, font, 160, 100);
         let mut app_renderer = AppRenderer::new();
         app_renderer.render(app.world_mut(), 160, 100);
         let actual = &app_renderer.fb;
@@ -4329,7 +4329,7 @@ fn composite_gpu_layers_sw(
     let (tx, ty, tw, th) = app_renderer.puzzle_renderer.render_toolbox_layer_rgba(
         app.world_mut(),
         &tbx,
-        &font,
+        font,
         px,
         py,
         &mut tbx_buf,
