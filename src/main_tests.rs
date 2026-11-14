@@ -1691,7 +1691,7 @@ fn playing_escape_exits_without_updating_session_on_exit_frame() {
 }
 
 #[test]
-fn title_ignores_non_finite_and_negative_dt() {
+fn title_and_credits_ignore_non_finite_and_negative_dt() {
     let mut app = synthetic_app();
     app.screen = AppScreen::Title;
     for dt in [f32::NAN, f32::NEG_INFINITY, -5.0] {
@@ -1706,6 +1706,42 @@ fn title_ignores_non_finite_and_negative_dt() {
         ..Default::default()
     });
     assert_eq!(app.screen, AppScreen::Browser);
+
+    app.set_screen(AppScreen::Credits { page: 0 });
+    for dt in [f32::NAN, f32::NEG_INFINITY, -5.0] {
+        app.handle_input(&AppInput {
+            dt,
+            ..Default::default()
+        });
+        assert_eq!(app.screen, AppScreen::Credits { page: 0 });
+    }
+    app.handle_input(&AppInput {
+        dt: 5.1,
+        ..Default::default()
+    });
+    assert_eq!(app.screen, AppScreen::Browser);
+}
+
+#[test]
+fn enter_on_frame_animation_completes_naturally_does_not_restart_or_spawn_pointer() {
+    let mut app = synthetic_app();
+    let mut session = PuzzleSession::new(1, app.preview_asset.clone(), 2, true, false, false);
+    session.auto_solve(&mut app.audio);
+    assert!(session.active_anim.is_some());
+    assert!(session.keyboard_pointer.is_none());
+    app.session = Some(session);
+    app.set_screen(AppScreen::Playing);
+
+    app.handle_input(&AppInput {
+        dt: 10.0,
+        enter: true,
+        ..Default::default()
+    });
+
+    assert_eq!(app.screen, AppScreen::Playing);
+    let session = app.session.as_ref().unwrap();
+    assert!(session.active_anim.is_none());
+    assert!(session.keyboard_pointer.is_none());
 }
 
 #[test]

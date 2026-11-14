@@ -349,10 +349,6 @@ impl PuzzleSession {
         self.tray_rev
     }
 
-    pub fn visual_rev(&self) -> u64 {
-        self.visual_rev
-    }
-
     pub fn active_pointer(&self, mouse_x: i32, mouse_y: i32) -> (i32, i32) {
         self.keyboard_pointer
             .map(|(x, y)| (x.round() as i32, y.round() as i32))
